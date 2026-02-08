@@ -49,6 +49,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file if present
+    dotenv::dotenv().ok();
+
     let cli = Cli::parse();
 
     match &cli.command {

@@ -1,0 +1,9 @@
+[core]
+auto_add_to_gitignore = true
+
+# Configure your remote storage here
+[remote.origin]
+provider = "s3"
+endpoint = "https://tos-s3-cn-beijing.volces.com"
+bucket = "azurice-playground"
+region = "cn-beijing"

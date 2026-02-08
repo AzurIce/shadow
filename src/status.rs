@@ -19,8 +19,24 @@ pub async fn run() -> Result<()> {
 
     // Report Staged Files
     if !staging.entries.is_empty() {
-        for (path, _) in &staging.entries {
-            println!("  [Staged]     {} (Ready to push)", path);
+        for (path_str, staged_hash) in &staging.entries {
+            let path = Path::new(path_str);
+            if !path.exists() {
+                println!("  [Staged (Deleted)]  {} (File missing)", path_str);
+                continue;
+            }
+            
+            match compute_sha256(path) {
+                Ok(raw) => {
+                    let current = format!("sha256:{}", raw);
+                    if current != *staged_hash {
+                        println!("  [Staged (Modified)] {} (Needs 'shadow add' to update)", path_str);
+                    } else {
+                        println!("  [Staged]            {} (Ready to push)", path_str);
+                    }
+                },
+                Err(_) => println!("  [Staged (Error)]    {}", path_str),
+            }
         }
     }
 
@@ -34,12 +50,8 @@ pub async fn run() -> Result<()> {
                 for entry in paths {
                     if let Ok(path) = entry {
                         if path.is_file() {
-                            // Filter out staged files from "Untracked" report?
+                            // Filter out staged files from "Untracked" report
                             // Yes, if it is staged, it is tracked (in a way).
-                            // But status logic below checks for POINTER.
-                            // Staged files don't have pointers yet.
-                            // So they would show up as Untracked.
-                            // We should skip them if they are in staging.
                             let path_lossy = path.to_string_lossy().replace("\\", "/");
                             if !staging.entries.contains_key(&path_lossy) {
                                 tracked_sources.insert(path);
@@ -74,7 +86,7 @@ pub async fn run() -> Result<()> {
         let shadow_path = PathBuf::from(format!("{}.shadow", path_str));
 
         if !pointers.contains(&shadow_path) {
-            println!("  [Untracked]  {} (Matches .shadowtrack)", path_str);
+            println!("  [Untracked]         {} (Matches .shadowtrack)", path_str);
             has_changes = true;
         }
     }
@@ -94,27 +106,27 @@ pub async fn run() -> Result<()> {
         let stored_hash = pointer_content.trim();
 
         if !source_path.exists() {
-            println!("  [Missing]    {} (Deleted locally)", path_str);
+            println!("  [Missing]           {} (Deleted locally)", path_str);
             has_changes = true;
         } else {
             // Source exists. Check Hash.
             let current_hash_raw = match compute_sha256(&source_path) {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("  [Error]      {} (Hash fail: {})", path_str, e);
+                    eprintln!("  [Error]             {} (Hash fail: {})", path_str, e);
                     continue;
                 }
             };
             let current_hash = format!("sha256:{}", current_hash_raw);
 
             if current_hash != stored_hash {
-                println!("  [Modified]   {} (Content changed)", path_str);
+                println!("  [Modified]          {} (Content changed)", path_str);
                 has_changes = true;
             } else {
                 // Check Metadata
                 let metadata_path = get_metadata_path(&root, stored_hash);
                 if !metadata_path.exists() {
-                     println!("  [NoMeta]     {} (Metadata missing)", path_str);
+                     println!("  [NoMeta]            {} (Metadata missing)", path_str);
                 }
             }
         }
