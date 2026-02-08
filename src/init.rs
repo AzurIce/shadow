@@ -20,7 +20,7 @@ pub async fn run() -> Result<()> {
     }
 
     // 2. Create default config
-    let config_path = shadow_dir.join("config");
+    let config_path = shadow_dir.join("config.toml");
     if !config_path.exists() {
         let default_config = r#"[core]
 auto_add_to_gitignore = true
@@ -33,9 +33,9 @@ auto_add_to_gitignore = true
 # region = "auto"
 "#;
         fs::write(&config_path, default_config).context("Failed to write default config")?;
-        println!("Created .shadow/config");
+        println!("Created .shadow/config.toml");
     } else {
-        println!(".shadow/config already exists, skipping");
+        println!(".shadow/config.toml already exists, skipping");
     }
 
     // 3. Create example .shadowtrack

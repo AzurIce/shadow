@@ -1,8 +1,0 @@
-[core]
-auto_add_to_gitignore = true
-
-[remote.origin]
-provider = "s3"
-endpoint = "https://example.com"
-bucket = "my-bucket"
-region = "auto"

@@ -33,7 +33,7 @@ pub struct RemoteConfig {
 impl Config {
     pub fn load() -> Result<Self> {
         let root = crate::utils::find_project_root()?;
-        let path = root.join(".shadow").join("config");
+        let path = root.join(".shadow").join("config.toml");
 
         if !path.exists() {
             // Should not happen if find_project_root succeeded, unless config is missing inside .shadow
@@ -43,8 +43,9 @@ impl Config {
             ));
         }
 
-        let content = fs::read_to_string(&path).context("Failed to read .shadow/config")?;
-        let config: Config = toml::from_str(&content).context("Failed to parse .shadow/config")?;
+        let content = fs::read_to_string(&path).context("Failed to read .shadow/config.toml")?;
+        let config: Config =
+            toml::from_str(&content).context("Failed to parse .shadow/config.toml")?;
 
         Ok(config)
     }
