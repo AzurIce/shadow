@@ -19,8 +19,10 @@ pub async fn run() -> Result<()> {
 
     // Report Staged Files
     if !staging.entries.is_empty() {
-        for (path_str, staged_hash) in &staging.entries {
+        for (path_str, metadata) in &staging.entries {
             let path = Path::new(path_str);
+            let staged_hash = &metadata.hash;
+
             if !path.exists() {
                 println!("  [Staged (Deleted)]  {} (File missing)", path_str);
                 continue;

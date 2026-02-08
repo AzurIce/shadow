@@ -1,12 +1,13 @@
+use crate::object::ObjectMetadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Default)]
 pub struct StagingIndex {
-    // Map relative_path -> hash
-    pub entries: HashMap<String, String>,
+    // Map relative_path -> Metadata
+    pub entries: HashMap<String, ObjectMetadata>,
 }
 
 impl StagingIndex {
@@ -28,8 +29,8 @@ impl StagingIndex {
         Ok(())
     }
 
-    pub fn add(&mut self, path: String, hash: String) {
-        self.entries.insert(path, hash);
+    pub fn add(&mut self, path: String, metadata: ObjectMetadata) {
+        self.entries.insert(path, metadata);
     }
 
     pub fn remove(&mut self, path: &str) {

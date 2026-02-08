@@ -1,9 +1,8 @@
 use crate::object::ObjectMetadata;
 use crate::stage::StagingIndex;
-use crate::utils::{add_to_shadowtrack, compute_sha256, get_metadata_path, find_project_root};
+use crate::utils::{add_to_shadowtrack, compute_sha256, find_project_root};
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
 
 pub async fn run(files: Vec<String>) -> Result<()> {
     let root = find_project_root()?;
@@ -41,20 +40,11 @@ pub async fn run(files: Vec<String>) -> Result<()> {
         let full_hash = format!("sha256:{}", raw_hash);
         let file_size = fs::metadata(&abs_path)?.len();
 
-        // 2. Create/Update Metadata (Write immediately to .shadow/objects)
-        // Metadata is harmless to exist even if we don't push yet.
+        // 2. Create Metadata (InMemory)
         let metadata = ObjectMetadata::new(full_hash.clone(), file_size);
-        let metadata_path = get_metadata_path(&root, &full_hash);
-        
-        if let Some(parent) = metadata_path.parent() {
-            fs::create_dir_all(parent).context("Failed to create metadata directory")?;
-        }
-
-        let json_content = serde_json::to_string_pretty(&metadata)?;
-        fs::write(&metadata_path, json_content).context("Failed to write metadata file")?;
         
         // 3. Update Staging Index
-        index.add(rel_path.clone(), full_hash);
+        index.add(rel_path.clone(), metadata);
 
         // 4. Update .shadowtrack (Ensure it's tracked)
         add_to_shadowtrack(&root, &rel_path)?;

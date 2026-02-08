@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::remote::RemoteClient;
 use crate::stage::StagingIndex;
-use crate::utils::{add_to_gitignore, compute_sha256, find_project_root};
+use crate::utils::{add_to_gitignore, compute_sha256, find_project_root, get_metadata_path};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -32,8 +32,9 @@ pub async fn run(remote_name: String) -> Result<()> {
 
     // Iterate over a clone of keys/values to allow modification of index later
     // or just collect success keys.
-    for (rel_path_str, hash) in &index.entries {
+    for (rel_path_str, metadata) in &index.entries {
         let path = Path::new(rel_path_str);
+        let hash = &metadata.hash;
         
         // Safety Check: Does file match hash?
         if !path.exists() {
@@ -77,9 +78,28 @@ pub async fn run(remote_name: String) -> Result<()> {
 
     // 5. Finalize Pushed Items
     for path_str in pushed_paths {
-        // Create Pointer
-        let path = Path::new(&path_str);
-        let hash = index.entries.get(&path_str).unwrap(); // Must exist
+        // Retrieve metadata from index
+        let metadata = index.entries.get(&path_str).unwrap(); 
+        let hash = &metadata.hash;
+
+        // 1. Write Metadata File (Committing metadata to store)
+        let metadata_path = get_metadata_path(&root, hash);
+        if let Some(parent) = metadata_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!("  [Error] Failed to create metadata directory for {}: {}", path_str, e);
+                // If metadata write fails, should we continue?
+                // Pointer without metadata is partial state.
+                // But object is uploaded.
+                // Continue.
+            }
+        }
+        if let Ok(json) = serde_json::to_string_pretty(metadata) {
+             if let Err(e) = fs::write(&metadata_path, json) {
+                 eprintln!("  [Error] Failed to write metadata for {}: {}", path_str, e);
+             }
+        }
+
+        // 2. Create Pointer
         let pointer_path_str = format!("{}.shadow", path_str);
         let pointer_path = Path::new(&pointer_path_str);
         
@@ -88,14 +108,14 @@ pub async fn run(remote_name: String) -> Result<()> {
             continue;
         }
         
-        // Add to gitignore
+        // 3. Add to gitignore
         if config.core.auto_add_to_gitignore {
             if let Err(e) = add_to_gitignore(&root, &path_str) {
                 eprintln!("  [Error] Failed to update gitignore for {}: {}", path_str, e);
             }
         }
 
-        // Remove from index
+        // 4. Remove from index
         index.remove(&path_str);
         println!("  [Shadowed] {}", path_str);
     }
