@@ -104,3 +104,29 @@ pub fn add_to_gitignore(root: &Path, path_str: &str) -> Result<()> {
 
     Ok(())
 }
+
+/// Ensure a path is in .shadowtrack (Relative to root)
+pub fn add_to_shadowtrack(root: &Path, path_str: &str) -> Result<()> {
+    let track_path = root.join(".shadowtrack");
+    let path_str = path_str.replace("\\", "/");
+
+    if track_path.exists() {
+        let file = File::open(&track_path)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim() == path_str {
+                return Ok(());
+            }
+        }
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(track_path)
+        .context("Failed to open .shadowtrack")?;
+
+    writeln!(file, "{}", path_str).context("Failed to append to .shadowtrack")?;
+    Ok(())
+}

@@ -1,3 +1,4 @@
+use crate::stage::StagingIndex;
 use crate::utils::{compute_sha256, get_metadata_path, find_project_root};
 use anyhow::{Context, Result};
 use glob::glob;
@@ -8,11 +9,20 @@ use std::path::{Path, PathBuf};
 pub async fn run() -> Result<()> {
     // 1. Find root
     let root = find_project_root()?;
-    // Change CWD to root to ensure glob patterns work correctly relative to root
     std::env::set_current_dir(&root).context("Failed to change CWD to project root")?;
 
     println!("Shadow Status (Root: {:?})", root);
     println!("==============");
+
+    // Load Staging Index
+    let staging = StagingIndex::load(&root)?;
+
+    // Report Staged Files
+    if !staging.entries.is_empty() {
+        for (path, _) in &staging.entries {
+            println!("  [Staged]     {} (Ready to push)", path);
+        }
+    }
 
     let patterns = load_shadowtrack(&root)?;
     
@@ -24,7 +34,16 @@ pub async fn run() -> Result<()> {
                 for entry in paths {
                     if let Ok(path) = entry {
                         if path.is_file() {
-                            tracked_sources.insert(path);
+                            // Filter out staged files from "Untracked" report?
+                            // Yes, if it is staged, it is tracked (in a way).
+                            // But status logic below checks for POINTER.
+                            // Staged files don't have pointers yet.
+                            // So they would show up as Untracked.
+                            // We should skip them if they are in staging.
+                            let path_lossy = path.to_string_lossy().replace("\\", "/");
+                            if !staging.entries.contains_key(&path_lossy) {
+                                tracked_sources.insert(path);
+                            }
                         }
                     }
                 }
@@ -46,7 +65,7 @@ pub async fn run() -> Result<()> {
 
     let mut has_changes = false;
 
-    // Check for Untracked (In source, No pointer)
+    // Check for Untracked (In source, No pointer, Not Staged)
     let mut sorted_sources: Vec<_> = tracked_sources.iter().collect();
     sorted_sources.sort();
 
@@ -101,7 +120,7 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    if !has_changes {
+    if !has_changes && staging.entries.is_empty() {
         println!("Nothing to report. Working tree clean.");
     }
 

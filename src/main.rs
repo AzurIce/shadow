@@ -10,6 +10,7 @@ mod status;
 mod push;
 mod remote;
 mod pull;
+mod stage;
 
 #[derive(Parser)]
 #[command(name = "git-shadow")]
