@@ -78,19 +78,20 @@ pub fn get_s3_key(hash: &str) -> String {
 /// Ensure a path is in .gitignore (Relative to root)
 pub fn add_to_gitignore(root: &Path, path_str: &str) -> Result<()> {
     let gitignore_path = root.join(".gitignore");
-
-    // Normalize path separators to forward slash for gitignore
     let path_str = path_str.replace("\\", "/");
+    let header = "# shadow generated";
 
-    if gitignore_path.exists() {
-        let file = File::open(&gitignore_path)?;
-        let reader = BufReader::new(file);
+    // Read all content
+    let content = if gitignore_path.exists() {
+        std::fs::read_to_string(&gitignore_path)?
+    } else {
+        String::new()
+    };
 
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim() == path_str {
-                return Ok(()); // Already exists
-            }
+    // Check if path already exists
+    for line in content.lines() {
+        if line.trim() == path_str {
+            return Ok(());
         }
     }
 
@@ -99,6 +100,14 @@ pub fn add_to_gitignore(root: &Path, path_str: &str) -> Result<()> {
         .append(true)
         .open(gitignore_path)
         .context("Failed to open .gitignore")?;
+
+    // Check if header exists
+    if !content.contains(header) {
+        if !content.is_empty() && !content.ends_with('\n') {
+            writeln!(file)?;
+        }
+        writeln!(file, "\n{}", header)?;
+    }
 
     writeln!(file, "{}", path_str).context("Failed to append to .gitignore")?;
 

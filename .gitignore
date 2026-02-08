@@ -2,5 +2,3 @@
 /git-shadow
 /s3_test
 test_meta.txt
-.shadow/config.toml
-bigfile.txt
