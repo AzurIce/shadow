@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::object::ObjectMetadata;
-use crate::remote::RemoteClient;
 use crate::utils::{add_to_gitignore, compute_sha256, get_metadata_path, find_project_root};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
@@ -11,15 +10,17 @@ pub async fn run(files: Vec<String>) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // 1. Load config
-    let config = Config::load().context("Failed to load config")?;
-    
-    // 2. Initialize Remote (Enforce "Upload First" policy)
-    // We assume "origin" is the target. In future, allow flags.
-    let remote_name = "origin";
-    let remote_config = config.get_remote(remote_name)
-        .ok_or_else(|| anyhow!("Remote '{}' not configured. 'shadow add' requires a configured remote to ensure upload.", remote_name))?;
-    
-    let client = RemoteClient::new(remote_config)?;
+    let config = Config::load().unwrap_or_else(|e| {
+        // If config fails (e.g. not found, parse error), use default.
+        // But if it's a parse error, maybe we should warn?
+        // Config::load() returns error if file missing or parse error.
+        // We'll log it and proceed with defaults.
+        println!("Warning: Could not load config ({}), using defaults.", e);
+        Config {
+            core: Default::default(),
+            remote: Default::default(),
+        }
+    });
 
     for file_arg in files {
         let abs_path = cwd.join(&file_arg);
@@ -45,34 +46,12 @@ pub async fn run(files: Vec<String>) -> Result<()> {
 
         println!("Processing: {}", rel_path);
 
-        // 3. Compute Hash
+        // 2. Compute Hash
         let raw_hash = compute_sha256(&abs_path).context("Failed to compute hash")?;
         let full_hash = format!("sha256:{}", raw_hash);
         let file_size = fs::metadata(&abs_path)?.len();
 
-        // 4. Upload (Ensure object exists in remote BEFORE creating pointer)
-        println!("  - Verifying remote status...");
-        match client.exists(&full_hash).await {
-            Ok(true) => {
-                println!("  - Object already exists on remote. Skipping upload.");
-            },
-            Ok(false) => {
-                println!("  - Object missing on remote. Uploading...");
-                if let Err(e) = client.upload_file(&full_hash, &abs_path).await {
-                    eprintln!("  [Error] Failed to upload {}: {}", file_arg, e);
-                    eprintln!("  [Abort] Pointer NOT created to ensure safety.");
-                    continue; // Skip to next file, do not create pointer
-                }
-                println!("  - Upload complete.");
-            },
-            Err(e) => {
-                eprintln!("  [Error] Failed to check remote status: {}", e);
-                eprintln!("  [Abort] Pointer NOT created.");
-                continue;
-            }
-        }
-
-        // 5. Create/Update Metadata
+        // 3. Create/Update Metadata
         let metadata = ObjectMetadata::new(full_hash.clone(), file_size);
         let metadata_path = get_metadata_path(&root, &full_hash);
         
@@ -84,18 +63,20 @@ pub async fn run(files: Vec<String>) -> Result<()> {
         fs::write(&metadata_path, json_content).context("Failed to write metadata file")?;
         println!("  - Metadata saved to: {:?}", metadata_path);
 
-        // 6. Create Pointer File
+        // 4. Create Pointer File
         let pointer_path_str = format!("{}.shadow", abs_path.to_string_lossy());
         let pointer_path = Path::new(&pointer_path_str);
         fs::write(pointer_path, &full_hash).context("Failed to write pointer file")?;
         
         println!("  - Pointer created: {}.shadow", file_arg);
 
-        // 7. Update .gitignore
+        // 5. Update .gitignore
         if config.core.auto_add_to_gitignore {
             add_to_gitignore(&root, &rel_path).context("Failed to update .gitignore")?;
             println!("  - Added to .gitignore");
         }
+        
+        println!("  -> Staged for shadow. Run 'shadow push' to upload.");
     }
 
     Ok(())
