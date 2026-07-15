@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::hash::hash_file;
+use crate::hash::{finalize_sha256, hash_file};
 use crate::model::{BlobKey, ObjectId, ShadowRef};
 use anyhow::{Context, Result, bail};
 use ignore::WalkBuilder;
@@ -201,7 +201,7 @@ impl Repository {
         writer.flush()?;
         writer.get_ref().sync_all()?;
 
-        let oid = ObjectId::from_sha256_hex(format!("{:x}", hasher.finalize()))?;
+        let oid = finalize_sha256(hasher)?;
         let cache_path = self.cache_path(&oid);
         if cache_path.exists() {
             let (cached_oid, cached_size) = hash_file(&cache_path)?;
