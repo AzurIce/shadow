@@ -67,7 +67,7 @@ TOS backend 明确不能依赖以下 HNS 特有能力：
 
 ```toml
 version = 1
-repository_id = "0190f1c2-7c67-7cde-8d4f-2f128dc55f11"
+name = "my-models"
 
 [backend]
 type = "volcengine_tos"
@@ -79,7 +79,7 @@ prefix = "shadow"
 
 配置要求：
 
-- `repository_id`：初始化后不可随意修改。
+- `name`：项目在 bucket/prefix 下的唯一名称，首次发布后不应直接修改。
 - `endpoint`：显式配置，避免在核心代码中维护区域映射表。
 - `region`：用于 SDK 和签名。
 - `bucket`：必须已存在，v1 不负责创建 bucket。
@@ -102,13 +102,13 @@ TOS_SECURITY_TOKEN     # 可选
 完整对象键：
 
 ```text
-<prefix>/repositories/<repository-id>/objects/sha256/<first-2>/<remaining-62>
+<prefix>/<name>/objects/sha256/<first-2>/<remaining-62>
 ```
 
 示例：
 
 ```text
-shadow/repositories/0190f1c2-7c67-7cde-8d4f-2f128dc55f11/objects/sha256/ab/cdef...
+shadow/my-models/objects/sha256/ab/cdef...
 ```
 
 约束：
@@ -116,7 +116,7 @@ shadow/repositories/0190f1c2-7c67-7cde-8d4f-2f128dc55f11/objects/sha256/ab/cdef.
 1. 对象键只由已验证的 `ObjectId` 生成，不能接受任意字符串。
 2. 所有分隔符固定使用 `/`。
 3. 对象键不包含原文件路径。
-4. 同一个 repository namespace 中，相同 SHA-256 只保存一次。
+4. 同一个项目 name 命名空间中，相同 SHA-256 只保存一次。
 5. v1 不启用跨仓库去重，以换取可解释且安全的 GC 边界。
 
 ## 5. 远端对象元数据
@@ -127,7 +127,7 @@ shadow/repositories/0190f1c2-7c67-7cde-8d4f-2f128dc55f11/objects/sha256/ab/cdef.
 shadow-version = 1
 shadow-oid = sha256:...
 shadow-size = 104857600
-shadow-repository-id = ...
+shadow-name = my-models
 ```
 
 远端元数据用于诊断，不作为唯一真相来源。对象身份仍由 key 和下载后的 SHA-256 校验确定。
@@ -339,7 +339,7 @@ tos_code=AccessDenied request_id=... retryable=false
 
 GC 不依赖上传清单文件。TOS prefix 下的对象列表就是库存集合。
 
-第一阶段即使不暴露 GC 命令，也应确保 object key 和 repository namespace 已经满足未来安全列举与删除的要求。
+第一阶段即使不暴露 GC 命令，也应确保 object key 和项目 name 命名空间已经满足未来安全列举与删除的要求。
 
 ## 14. 测试策略
 

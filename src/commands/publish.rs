@@ -93,7 +93,8 @@ mod tests {
         fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
         fs::write(temp.path().join(".gitignore"), "# shadow\n*.bin\n").unwrap();
         fs::write(temp.path().join("a.bin"), b"hello").unwrap();
-        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new()).unwrap();
+        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
+            .unwrap();
         let store = MemoryStore::default();
         publish_with_store(&repo, &[], &store).await.unwrap();
         let reference = repo
@@ -101,9 +102,6 @@ mod tests {
             .unwrap()
             .remove(Path::new("a.bin"))
             .unwrap();
-        assert!(store.contains(&BlobKey::for_object(
-            &repo.config.repository_id,
-            &reference.oid
-        )));
+        assert!(store.contains(&BlobKey::for_object(&repo.config.name, &reference.oid)));
     }
 }

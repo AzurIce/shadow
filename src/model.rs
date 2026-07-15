@@ -75,10 +75,10 @@ impl ShadowRef {
 pub struct BlobKey(String);
 
 impl BlobKey {
-    pub fn for_object(repository_id: &str, oid: &ObjectId) -> Self {
+    pub fn for_object(name: &str, oid: &ObjectId) -> Self {
         Self(format!(
-            "repositories/{}/objects/sha256/{}/{}",
-            repository_id,
+            "{}/objects/sha256/{}/{}",
+            name,
             &oid.hex()[..2],
             &oid.hex()[2..]
         ))
@@ -115,6 +115,15 @@ mod tests {
         assert_eq!(
             ShadowRef::parse(&reference.serialize().unwrap()).unwrap(),
             reference
+        );
+    }
+
+    #[test]
+    fn builds_project_scoped_blob_key() {
+        let oid = ObjectId::from_sha256_hex("a".repeat(64)).unwrap();
+        assert_eq!(
+            BlobKey::for_object("my-project", &oid).as_str(),
+            format!("my-project/objects/sha256/aa/{}", "a".repeat(62))
         );
     }
 }

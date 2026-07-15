@@ -156,7 +156,7 @@ impl Repository {
     }
 
     pub fn blob_key(&self, oid: &ObjectId) -> BlobKey {
-        BlobKey::for_object(&self.config.repository_id, oid)
+        BlobKey::for_object(&self.config.name, oid)
     }
 
     pub fn write_ref(&self, relative: &Path, reference: &ShadowRef) -> Result<()> {
@@ -428,7 +428,7 @@ mod tests {
     fn repository(temp: &TempDir, gitignore: &str) -> Repository {
         fs::write(temp.path().join(".gitignore"), gitignore).unwrap();
         fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
-        Repository::from_parts(temp.path().to_path_buf(), Config::new()).unwrap()
+        Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap()).unwrap()
     }
 
     #[test]
@@ -473,6 +473,9 @@ mod tests {
             "# shadow\n*.bin\n# shadow\n",
         )
         .unwrap();
-        assert!(Repository::from_parts(temp.path().to_path_buf(), Config::new()).is_err());
+        assert!(
+            Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
+                .is_err()
+        );
     }
 }

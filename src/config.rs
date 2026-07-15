@@ -2,14 +2,13 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use uuid::Uuid;
 
 pub const CONFIG_FILE: &str = "shadow.toml";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub version: u32,
-    pub repository_id: String,
+    pub name: String,
     #[serde(default)]
     pub backend: Option<BackendConfig>,
 }
@@ -30,12 +29,14 @@ fn default_prefix() -> String {
 }
 
 impl Config {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(name: impl Into<String>) -> Result<Self> {
+        let config = Self {
             version: 1,
-            repository_id: Uuid::new_v4().to_string(),
+            name: name.into(),
             backend: None,
-        }
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn load(root: &Path) -> Result<Self> {
@@ -52,7 +53,7 @@ impl Config {
         if self.version != 1 {
             bail!("unsupported shadow.toml version: {}", self.version);
         }
-        Uuid::parse_str(&self.repository_id).context("repository_id must be a UUID")?;
+        validate_name(&self.name)?;
         if let Some(backend) = &self.backend {
             if backend.kind != "volcengine_tos" {
                 bail!("unsupported backend type: {}", backend.kind);
@@ -70,16 +71,28 @@ impl Config {
 
     pub fn initial_document(&self) -> String {
         format!(
-            "version = 1\nrepository_id = \"{}\"\n\n# [backend]\n# type = \"volcengine_tos\"\n# endpoint = \"https://tos-cn-beijing.volces.com\"\n# region = \"cn-beijing\"\n# bucket = \"example-shadow\"\n# prefix = \"shadow\"\n",
-            self.repository_id
+            "version = 1\nname = \"{}\"\n\n# [backend]\n# type = \"volcengine_tos\"\n# endpoint = \"https://tos-cn-beijing.volces.com\"\n# region = \"cn-beijing\"\n# bucket = \"example-shadow\"\n# prefix = \"shadow\"\n",
+            self.name
         )
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self::new()
+fn validate_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.trim() != name {
+        bail!("name must be non-empty and must not have leading or trailing whitespace");
     }
+    if name == "." || name == ".." {
+        bail!("name must not be '.' or '..'");
+    }
+    if name.len() > 128 {
+        bail!("name must not exceed 128 bytes");
+    }
+    if name.chars().any(|character| {
+        character == '/' || character == '\\' || character == '"' || character.is_control()
+    }) {
+        bail!("name must be a single safe object-key component");
+    }
+    Ok(())
 }
 
 fn validate_prefix(prefix: &str) -> Result<()> {
@@ -99,5 +112,14 @@ mod tests {
     #[test]
     fn rejects_parent_prefix() {
         assert!(validate_prefix("a/../b").is_err());
+    }
+
+    #[test]
+    fn validates_project_names() {
+        assert!(Config::new("models").is_ok());
+        assert!(Config::new("模型仓库").is_ok());
+        assert!(Config::new("a/b").is_err());
+        assert!(Config::new("..").is_err());
+        assert!(Config::new("a\"b").is_err());
     }
 }

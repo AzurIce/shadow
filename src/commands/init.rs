@@ -18,7 +18,12 @@ pub fn run() -> Result<()> {
     fs::write(shadow.join(".gitignore"), "/cache/\n/tmp/\n")
         .context("failed to create .shadow/.gitignore")?;
 
-    let config = Config::new();
+    let name = root
+        .file_name()
+        .context("Git repository root has no directory name")?
+        .to_string_lossy()
+        .to_string();
+    let config = Config::new(name)?;
     fs::write(&config_path, config.initial_document())
         .with_context(|| format!("failed to create {}", config_path.display()))?;
     ensure_shadow_marker(&root.join(".gitignore"))?;

@@ -156,10 +156,12 @@ sha256:<64 lowercase hex characters>
 远端对象键：
 
 ```text
-repositories/<repository-id>/objects/sha256/ab/cdef...
+<name>/objects/sha256/ab/cdef...
 ```
 
-`repository-id` 在 `shadow init` 时生成，保存在根目录 `shadow.toml`，用于隔离共享 bucket 中的不同仓库。对象键不包含原始文件路径，因此文件重命名不会重新上传内容。
+`name` 保存在根目录 `shadow.toml`，`shadow init` 默认使用 Git 仓库目录名。它用于隔离共享 bucket/prefix 中的不同项目，同一 bucket/prefix 下必须保持唯一。对象键不包含原始文件路径，因此文件重命名不会重新上传内容。
+
+项目首次发布后不应直接修改 `name`。修改 name 相当于切换到一个新的远端命名空间，已有 refs 将无法在新位置找到旧对象，除非重新发布或执行专门的迁移。
 
 ## 8. 本地缓存
 
@@ -205,7 +207,7 @@ cache 写入流程：
 
 1. 确认当前目录属于 Git 仓库。
 2. 创建 `.shadow/` 目录结构。
-3. 生成稳定的 `repository-id`。
+3. 使用 Git 仓库目录名生成默认 `name`。
 4. 创建根目录 `shadow.toml` 和 `.shadow/.gitignore`。
 5. 在根 `.gitignore` 末尾创建 `# shadow` 标记。
 
@@ -343,7 +345,7 @@ GC 至少需要：
 
 - 默认 `--dry-run`
 - 宽限期，例如 30 天
-- 仓库命名空间隔离
+- 项目 name 命名空间隔离
 - 删除前再次计算可达集合
 - 分批删除与失败清单
 - 不自动重写 Git 历史

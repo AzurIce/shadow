@@ -132,7 +132,8 @@ mod tests {
         fs::write(temp.path().join(".gitignore"), "# shadow\n*.bin\n").unwrap();
         fs::write(temp.path().join("a.bin"), b"a").unwrap();
         fs::write(temp.path().join("b.bin"), b"b").unwrap();
-        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new()).unwrap();
+        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
+            .unwrap();
         let store = MemoryStore::default();
         publish_with_store(&repo, &[], &store).await.unwrap();
 

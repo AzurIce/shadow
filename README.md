@@ -38,7 +38,7 @@ shadow verify [--remote]
 
 ```toml
 version = 1
-repository_id = "generated-uuid"
+name = "my-project"
 
 [backend]
 type = "volcengine_tos"

@@ -104,7 +104,7 @@ mod tests {
     fn repository(temp: &TempDir) -> Repository {
         fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
         fs::write(temp.path().join(".gitignore"), "# shadow\n*.bin\n").unwrap();
-        Repository::from_parts(temp.path().to_path_buf(), Config::new()).unwrap()
+        Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap()).unwrap()
     }
 
     #[tokio::test]
