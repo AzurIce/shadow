@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.101"
 async-trait = "0.1.89"
 clap = { version = "4.5.57", features = ["derive"] }
+dotenvy = "0.15.7"
 futures-core = "0.3.31"
 ignore = "0.4.25"
 serde = { version = "1.0.228", features = ["derive"] }

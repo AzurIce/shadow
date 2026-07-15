@@ -56,4 +56,6 @@ TOS_SECRET_KEY
 TOS_SECURITY_TOKEN
 ```
 
+Shadow loads these variables from `.env` at the Git repository root. Variables already present in the process environment take precedence over values in `.env`.
+
 See [the design documentation](docs/design.md) and [the TOS backend design](docs/backends/volcengine-tos.md) for the complete model.

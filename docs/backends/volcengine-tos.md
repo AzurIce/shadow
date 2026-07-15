@@ -95,6 +95,8 @@ TOS_SECURITY_TOKEN     # 可选
 
 这些名称与官方 SDK 的环境凭证 provider 保持一致。未来再支持实例角色、STS 和自定义凭证进程。
 
+Shadow 启动后从 Git 仓库根目录的 `.env` 加载这些变量。进程环境中已经存在的变量优先，不会被 `.env` 覆盖；`.env` 不存在时正常继续，存在但无法解析时返回明确错误。
+
 日志和错误信息不得打印 Access Key、Secret Key、Session Token 或完整签名请求头。
 
 ## 4. 对象键布局

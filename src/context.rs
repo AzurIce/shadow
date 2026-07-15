@@ -18,6 +18,7 @@ pub fn git_root() -> Result<PathBuf> {
 
 pub fn discover() -> Result<Repository> {
     let root = git_root()?;
+    load_dotenv(&root)?;
     if !root.join(CONFIG_FILE).is_file() {
         bail!(
             "{} not found at Git repository root {}; run 'shadow init' first",
@@ -26,6 +27,20 @@ pub fn discover() -> Result<Repository> {
         );
     }
     Repository::load(root)
+}
+
+fn load_dotenv(root: &Path) -> Result<()> {
+    let path = root.join(".env");
+    if !path.exists() {
+        return Ok(());
+    }
+    dotenvy::from_path(&path).with_context(|| {
+        format!(
+            "failed to load environment variables from {}",
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 pub fn load_at(root: impl AsRef<Path>) -> Result<Repository> {
