@@ -40,6 +40,7 @@ impl fmt::Display for ObjectId {
 pub struct ShadowRef {
     pub oid: ObjectId,
     pub size: u64,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,6 +48,8 @@ struct RefDocument {
     version: u32,
     oid: String,
     size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_type: Option<String>,
 }
 
 impl ShadowRef {
@@ -55,9 +58,14 @@ impl ShadowRef {
         if document.version != 1 {
             bail!("unsupported ref version: {}", document.version);
         }
+        let content_type = document
+            .content_type
+            .map(validate_content_type)
+            .transpose()?;
         Ok(Self {
             oid: ObjectId::parse(&document.oid)?,
             size: document.size,
+            content_type,
         })
     }
 
@@ -66,6 +74,7 @@ impl ShadowRef {
             version: 1,
             oid: self.oid.as_ref_value(),
             size: self.size,
+            content_type: self.content_type.clone(),
         })
         .context("failed to serialize ref")
     }
@@ -93,6 +102,19 @@ impl BlobKey {
 pub struct BlobMetadata {
     pub size: u64,
     pub etag: Option<String>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UploadOptions {
+    pub content_type: String,
+}
+
+fn validate_content_type(value: String) -> Result<String> {
+    value
+        .parse::<mime::Mime>()
+        .with_context(|| format!("invalid content type: {value}"))?;
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -111,11 +133,22 @@ mod tests {
         let reference = ShadowRef {
             oid: ObjectId::from_sha256_hex("b".repeat(64)).unwrap(),
             size: 42,
+            content_type: Some("image/png".to_string()),
         };
         assert_eq!(
             ShadowRef::parse(&reference.serialize().unwrap()).unwrap(),
             reference
         );
+    }
+
+    #[test]
+    fn parses_legacy_ref_without_content_type() {
+        let reference = ShadowRef::parse(&format!(
+            "version = 1\noid = \"sha256:{}\"\nsize = 42\n",
+            "b".repeat(64)
+        ))
+        .unwrap();
+        assert_eq!(reference.content_type, None);
     }
 
     #[test]

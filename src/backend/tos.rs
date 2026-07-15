@@ -1,6 +1,6 @@
 use super::{BackendError, BackendErrorKind, BackendResult, BlobStore};
 use crate::config::BackendConfig;
-use crate::model::{BlobKey, BlobMetadata};
+use crate::model::{BlobKey, BlobMetadata, UploadOptions};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_core::future::BoxFuture;
@@ -14,12 +14,15 @@ use ve_tos_rust_sdk::asynchronous::multipart::MultipartAPI;
 use ve_tos_rust_sdk::asynchronous::object::ObjectAPI;
 use ve_tos_rust_sdk::asynchronous::tos::{self, AsyncRuntime, TosClientImpl};
 use ve_tos_rust_sdk::credential::{CommonCredentials, CommonCredentialsProvider};
+use ve_tos_rust_sdk::enumeration::MetadataDirectiveType::MetadataDirectiveReplace;
 use ve_tos_rust_sdk::error::TosError;
 use ve_tos_rust_sdk::multipart::{
     AbortMultipartUploadInput, CompleteMultipartUploadInput, CreateMultipartUploadInput,
     UploadPartFromFileInput, UploadedPart,
 };
-use ve_tos_rust_sdk::object::{GetObjectToFileInput, HeadObjectInput, PutObjectFromFileInput};
+use ve_tos_rust_sdk::object::{
+    GetObjectToFileInput, HeadObjectInput, PutObjectFromFileInput, SetObjectMetaInput,
+};
 
 const MULTIPART_THRESHOLD: u64 = 64 * 1024 * 1024;
 const PART_SIZE: u64 = 16 * 1024 * 1024;
@@ -88,10 +91,18 @@ impl TosStore {
         }
     }
 
-    async fn upload_multipart(&self, key: &str, source: &Path, size: u64) -> BackendResult<()> {
+    async fn upload_multipart(
+        &self,
+        key: &str,
+        source: &Path,
+        size: u64,
+        options: &UploadOptions,
+    ) -> BackendResult<()> {
+        let mut input = CreateMultipartUploadInput::new(&self.bucket, key);
+        input.set_content_type(&options.content_type);
         let created = self
             .client
-            .create_multipart_upload(&CreateMultipartUploadInput::new(&self.bucket, key))
+            .create_multipart_upload(&input)
             .await
             .map_err(map_tos_error)?;
         let upload_id = created.upload_id().to_string();
@@ -155,26 +166,43 @@ impl BlobStore for TosStore {
             Ok(output) => Ok(Some(BlobMetadata {
                 size: output.content_length().max(0) as u64,
                 etag: Some(output.etag().to_string()),
+                content_type: nonempty(output.content_type()),
             })),
             Err(error) if is_not_found(&error) => Ok(None),
             Err(error) => Err(map_tos_error(error)),
         }
     }
 
-    async fn upload_file(&self, key: &BlobKey, source: &Path, size: u64) -> BackendResult<()> {
+    async fn upload_file(
+        &self,
+        key: &BlobKey,
+        source: &Path,
+        size: u64,
+        options: &UploadOptions,
+    ) -> BackendResult<()> {
         let key = self.full_key(key);
         if size >= MULTIPART_THRESHOLD {
-            return self.upload_multipart(&key, source, size).await;
+            return self.upload_multipart(&key, source, size, options).await;
         }
         let source = source.to_str().ok_or_else(|| {
             BackendError::new(BackendErrorKind::Other, "source path is not UTF-8")
         })?;
+        let mut input = PutObjectFromFileInput::new_with_file_path(&self.bucket, &key, source);
+        input.set_content_type(&options.content_type);
         self.client
-            .put_object_from_file(&PutObjectFromFileInput::new_with_file_path(
-                &self.bucket,
-                &key,
-                source,
-            ))
+            .put_object_from_file(&input)
+            .await
+            .map_err(map_tos_error)?;
+        Ok(())
+    }
+
+    async fn update_metadata(&self, key: &BlobKey, options: &UploadOptions) -> BackendResult<()> {
+        let key = self.full_key(key);
+        let mut input = SetObjectMetaInput::new(&self.bucket, &key);
+        input.set_content_type(&options.content_type);
+        input.set_metadata_directive(MetadataDirectiveReplace);
+        self.client
+            .set_object_meta(&input)
             .await
             .map_err(map_tos_error)?;
         Ok(())
@@ -191,6 +219,10 @@ impl BlobStore for TosStore {
             .map_err(map_tos_error)?;
         Ok(())
     }
+}
+
+fn nonempty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn is_not_found(error: &TosError) -> bool {

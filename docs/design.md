@@ -127,6 +127,7 @@ ref 使用稳定、可读、可扩展的 TOML 格式：
 version = 1
 oid = "sha256:abcdef0123456789..."
 size = 104857600
+content_type = "image/png"
 ```
 
 字段语义：
@@ -134,6 +135,7 @@ size = 104857600
 - `version`：ref 格式版本。
 - `oid`：算法名称和十六进制摘要。
 - `size`：原始文件字节数。
+- `content_type`：对象发布时使用的规范 HTTP 媒体类型。旧 ref 可以省略，下一次 `publish` 会补齐。
 
 工作区路径由 ref 自身的位置表达，不在内容中重复保存。remote 也不写入 ref，同一 ref 将来可以上传到多个后端。
 
@@ -233,9 +235,10 @@ cache 写入流程：
 4. 使用 hash 生成远端对象 key。
 5. 调用后端 `stat` 检查对象是否存在。
 6. 对象已存在且大小正确时跳过上传。
-7. 对象不存在时从 cache 流式上传，大对象由后端实现 multipart。
-8. 上传完成后再次检查远端对象。
-9. 只有远端对象确认可用后，才原子写入或更新 `.shadow/refs/<path>.ref`。
+7. 根据内容特征和原始路径确定 `Content-Type`。相同对象 ID 的所有 ref 必须使用相同类型。
+8. 对象不存在时从 cache 流式上传；对象缺少或具有不同 `Content-Type` 时，通过后端的 metadata 更新操作原地修复，不重新传输对象内容。大对象由后端实现 multipart。
+9. 上传完成后再次检查远端对象的大小和 `Content-Type`。
+10. 只有远端对象确认可用后，才原子写入或更新 `.shadow/refs/<path>.ref`。
 
 因此，同一内容即使出现在多个路径中，也只上传一次。上传成功但本地 ref 写入失败时，再次运行 publish 会通过远端 `stat` 跳过上传并补写 ref。
 
@@ -274,6 +277,13 @@ pub trait BlobStore: Send + Sync {
         key: &BlobKey,
         source: &Path,
         size: u64,
+        options: &UploadOptions,
+    ) -> BackendResult<()>;
+
+    async fn update_metadata(
+        &self,
+        key: &BlobKey,
+        options: &UploadOptions,
     ) -> BackendResult<()>;
 
     async fn download_file(

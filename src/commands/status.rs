@@ -92,7 +92,13 @@ pub async fn collect(
                 let key = repo.blob_key(&reference.oid);
                 match store.stat(&key).await? {
                     None => Some("missing"),
-                    Some(metadata) if metadata.size == reference.size => Some("ok"),
+                    Some(metadata)
+                        if metadata.size == reference.size
+                            && reference.content_type.as_deref()
+                                == metadata.content_type.as_deref() =>
+                    {
+                        Some("ok")
+                    }
                     Some(_) => Some("invalid"),
                 }
             }

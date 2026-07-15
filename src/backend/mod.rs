@@ -1,7 +1,7 @@
 mod tos;
 
 use crate::config::Config;
-use crate::model::{BlobKey, BlobMetadata};
+use crate::model::{BlobKey, BlobMetadata, UploadOptions};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use std::path::Path;
@@ -46,7 +46,14 @@ pub type BackendResult<T> = std::result::Result<T, BackendError>;
 #[async_trait]
 pub trait BlobStore: Send + Sync {
     async fn stat(&self, key: &BlobKey) -> BackendResult<Option<BlobMetadata>>;
-    async fn upload_file(&self, key: &BlobKey, source: &Path, size: u64) -> BackendResult<()>;
+    async fn upload_file(
+        &self,
+        key: &BlobKey,
+        source: &Path,
+        size: u64,
+        options: &UploadOptions,
+    ) -> BackendResult<()>;
+    async fn update_metadata(&self, key: &BlobKey, options: &UploadOptions) -> BackendResult<()>;
     async fn download_file(&self, key: &BlobKey, destination: &Path) -> BackendResult<()>;
 }
 
@@ -67,14 +74,48 @@ pub mod testing {
     use std::fs;
     use std::sync::Mutex;
 
+    #[derive(Clone)]
+    struct MemoryObject {
+        data: Vec<u8>,
+        content_type: Option<String>,
+    }
+
     #[derive(Default)]
     pub struct MemoryStore {
-        objects: Mutex<HashMap<String, Vec<u8>>>,
+        objects: Mutex<HashMap<String, MemoryObject>>,
+        uploads: Mutex<usize>,
+        metadata_updates: Mutex<usize>,
     }
 
     impl MemoryStore {
         pub fn contains(&self, key: &BlobKey) -> bool {
             self.objects.lock().unwrap().contains_key(key.as_str())
+        }
+
+        pub fn content_type(&self, key: &BlobKey) -> Option<String> {
+            self.objects
+                .lock()
+                .unwrap()
+                .get(key.as_str())
+                .and_then(|object| object.content_type.clone())
+        }
+
+        pub fn insert_legacy(&self, key: &BlobKey, data: Vec<u8>) {
+            self.objects.lock().unwrap().insert(
+                key.as_str().to_string(),
+                MemoryObject {
+                    data,
+                    content_type: None,
+                },
+            );
+        }
+
+        pub fn upload_count(&self) -> usize {
+            *self.uploads.lock().unwrap()
+        }
+
+        pub fn metadata_update_count(&self) -> usize {
+            *self.metadata_updates.lock().unwrap()
         }
     }
 
@@ -86,19 +127,44 @@ pub mod testing {
                 .lock()
                 .unwrap()
                 .get(key.as_str())
-                .map(|data| BlobMetadata {
-                    size: data.len() as u64,
+                .map(|object| BlobMetadata {
+                    size: object.data.len() as u64,
                     etag: None,
+                    content_type: object.content_type.clone(),
                 }))
         }
 
-        async fn upload_file(&self, key: &BlobKey, source: &Path, _: u64) -> BackendResult<()> {
+        async fn upload_file(
+            &self,
+            key: &BlobKey,
+            source: &Path,
+            _: u64,
+            options: &UploadOptions,
+        ) -> BackendResult<()> {
             let data = fs::read(source)
                 .map_err(|error| BackendError::new(BackendErrorKind::Other, error.to_string()))?;
-            self.objects
-                .lock()
-                .unwrap()
-                .insert(key.as_str().to_string(), data);
+            self.objects.lock().unwrap().insert(
+                key.as_str().to_string(),
+                MemoryObject {
+                    data,
+                    content_type: Some(options.content_type.clone()),
+                },
+            );
+            *self.uploads.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn update_metadata(
+            &self,
+            key: &BlobKey,
+            options: &UploadOptions,
+        ) -> BackendResult<()> {
+            let mut objects = self.objects.lock().unwrap();
+            let object = objects
+                .get_mut(key.as_str())
+                .ok_or_else(|| BackendError::new(BackendErrorKind::NotFound, "object missing"))?;
+            object.content_type = Some(options.content_type.clone());
+            *self.metadata_updates.lock().unwrap() += 1;
             Ok(())
         }
 
@@ -108,7 +174,7 @@ pub mod testing {
                 .lock()
                 .unwrap()
                 .get(key.as_str())
-                .cloned()
+                .map(|object| object.data.clone())
                 .ok_or_else(|| BackendError::new(BackendErrorKind::NotFound, "object missing"))?;
             fs::write(destination, data)
                 .map_err(|error| BackendError::new(BackendErrorKind::Other, error.to_string()))

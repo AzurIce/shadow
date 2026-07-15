@@ -29,7 +29,7 @@ shadow verify [--remote]
 ```
 
 - `status` compares worktree files, refs, cache, and optionally the remote.
-- `publish` treats the worktree as authoritative, deduplicates by SHA-256, uploads missing blobs, and writes refs only after the remote object is available.
+- `publish` treats the worktree as authoritative, deduplicates by SHA-256, detects the media type, uploads missing blobs with `Content-Type`, and writes refs only after the remote object is available.
 - `restore` treats refs as authoritative, downloads through the local cache, verifies SHA-256, and refuses to overwrite modified files unless `--force` is used.
 
 ## Configuration

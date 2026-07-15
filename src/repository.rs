@@ -221,7 +221,11 @@ impl Repository {
                 )
             })?;
         }
-        Ok(ShadowRef { oid, size })
+        Ok(ShadowRef {
+            oid,
+            size,
+            content_type: None,
+        })
     }
 
     pub fn validate_cache(&self, reference: &ShadowRef) -> Result<bool> {
