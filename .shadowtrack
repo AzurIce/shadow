@@ -1,8 +1,0 @@
-# Define patterns for files to be tracked by git-shadow
-# These files will be uploaded to S3 and replaced by .shadow pointer files in git
-
-# Examples:
-# *.psd
-# models/**/*.bin
-# assets/large_*.texture
-bigfile.txt

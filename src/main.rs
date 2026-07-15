@@ -1,76 +1,56 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
-mod init;
-mod config;
-mod object;
-mod utils;
-mod add;
-mod status;
-mod push;
-mod remote;
-mod pull;
-mod stage;
+use shadow::commands;
 
-#[derive(Parser)]
-#[command(name = "git-shadow")]
-#[command(about = "A lightweight large file management tool for Git", long_about = None)]
-#[command(version)]
+#[derive(Debug, Parser)]
+#[command(
+    name = "shadow",
+    version,
+    about = "Explicit large-file storage for Git repositories"
+)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Command,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Initialize a new shadow repository
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Initialize Shadow in the current Git repository
     Init,
-    
-    /// Track files and create shadow pointers
-    Add {
-        /// Files to add
-        #[arg(required = true)]
-        files: Vec<String>,
+    /// Compare managed worktree files, refs, cache, and optionally the remote
+    Status {
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        remote: bool,
     },
-
-    /// Show status of shadowed files
-    Status,
-
-    /// Upload shadowed files to remote storage
-    Push {
-        /// Remote name (default: origin)
-        #[arg(default_value = "origin")]
-        remote: String,
+    /// Publish worktree content and create or update refs
+    Publish { paths: Vec<PathBuf> },
+    /// Restore worktree files from refs
+    Restore {
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        force: bool,
     },
-
-    /// Download shadowed files from remote storage
-    Pull,
+    /// Remove refs while keeping worktree and remote objects
+    Remove { paths: Vec<PathBuf> },
+    /// Verify local invariants and optionally remote objects
+    Verify {
+        #[arg(long)]
+        remote: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env file if present
-    dotenv::dotenv().ok();
-
     let cli = Cli::parse();
-
-    match &cli.command {
-        Commands::Init => {
-            init::run().await?;
-        }
-        Commands::Add { files } => {
-            add::run(files.clone()).await?;
-        }
-        Commands::Status => {
-            status::run().await?;
-        }
-        Commands::Push { remote } => {
-            push::run(remote.clone()).await?;
-        }
-        Commands::Pull => {
-            pull::run().await?;
-        }
+    match cli.command {
+        Command::Init => commands::init::run(),
+        Command::Status { paths, remote } => commands::status::run(paths, remote).await,
+        Command::Publish { paths } => commands::publish::run(paths).await,
+        Command::Restore { paths, force } => commands::restore::run(paths, force).await,
+        Command::Remove { paths } => commands::remove::run(paths),
+        Command::Verify { remote } => commands::verify::run(remote).await,
     }
-
-    Ok(())
 }

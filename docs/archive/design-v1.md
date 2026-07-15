@@ -1,3 +1,7 @@
+# Shadow 旧版设计归档
+
+> 本文档仅用于保留早期设计思路，不代表当前实现目标。
+
 一个独立的 CLI 应用，旨在解决 Git LFS 配置自定义对象存储（S3/R2/MinIO）繁琐的问题，并绕过 GitHub/GitLab 对 LFS 的带宽与空间限制。
 
 定位：介于 Git LFS 和 DVC 之间的轻量级大文件管理工具。
@@ -136,4 +140,3 @@ Shadow 采用**瘦指针 (Thin Pointer) + 元数据仓库 (Metadata Store)** 的
 ## 待定问题
 
 *   **鉴权管理**：是在这个 CLI 里做 `login` 命令，还是完全依赖环境变量（`AWS_ACCESS_KEY_ID`）？建议初期依赖环境变量或 `~/.aws/credentials`，减少开发成本。
-
