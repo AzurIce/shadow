@@ -1,6 +1,8 @@
 use crate::backend::{self, BlobStore};
 use crate::context;
 use crate::hash::hash_file;
+use crate::media_type;
+use crate::model::DEFAULT_CACHE_CONTROL;
 use crate::repository::Repository;
 use anyhow::Result;
 use std::collections::BTreeSet;
@@ -64,12 +66,19 @@ pub async fn collect(
         let remote = match (reference, store) {
             (Some(reference), Some(store)) => {
                 let key = repo.blob_key(&reference.oid);
+                let cache = repo.cache_path(&reference.oid);
+                let content = cache.is_file().then_some(cache.as_path()).or_else(|| {
+                    (state == LocalState::Published)
+                        .then(|| body.map(PathBuf::as_path))
+                        .flatten()
+                });
+                let content_type = media_type::detect(&path, content)?;
                 match store.stat(&key).await? {
                     None => Some("missing"),
                     Some(metadata)
                         if metadata.size == reference.size
-                            && reference.content_type.as_deref()
-                                == metadata.content_type.as_deref() =>
+                            && metadata.content_type.as_deref() == Some(content_type.as_str())
+                            && metadata.cache_control.as_deref() == Some(DEFAULT_CACHE_CONTROL) =>
                     {
                         Some("ok")
                     }

@@ -3,12 +3,17 @@ use std::path::Path;
 
 const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
-pub fn detect(path_hint: &Path, content: &Path) -> Result<String> {
+pub fn detect(path_hint: &Path, content: Option<&Path>) -> Result<String> {
     let by_extension = mime_guess::from_path(path_hint)
         .first_raw()
         .map(str::to_string);
-    let by_content = infer::get_from_path(content)
-        .with_context(|| format!("failed to inspect content type of {}", content.display()))?
+    let by_content = content
+        .map(|content| {
+            infer::get_from_path(content)
+                .with_context(|| format!("failed to inspect content type of {}", content.display()))
+        })
+        .transpose()?
+        .flatten()
         .map(|kind| kind.mime_type().to_string());
 
     Ok(match (by_content, by_extension) {
@@ -49,7 +54,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            detect(Path::new("image.jpg"), &content).unwrap(),
+            detect(Path::new("image.jpg"), Some(&content)).unwrap(),
             "image/png"
         );
     }
@@ -59,7 +64,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let content = temp.path().join("cached");
         fs::write(&content, b"body { color: red; }").unwrap();
-        assert_eq!(detect(Path::new("site.css"), &content).unwrap(), "text/css");
+        assert_eq!(
+            detect(Path::new("site.css"), Some(&content)).unwrap(),
+            "text/css"
+        );
     }
 
     #[test]
@@ -68,8 +76,13 @@ mod tests {
         let content = temp.path().join("cached");
         fs::write(&content, b"custom data").unwrap();
         assert_eq!(
-            detect(Path::new("README"), &content).unwrap(),
+            detect(Path::new("README"), Some(&content)).unwrap(),
             DEFAULT_CONTENT_TYPE
         );
+    }
+
+    #[test]
+    fn can_fall_back_to_extension_without_local_content() {
+        assert_eq!(detect(Path::new("image.png"), None).unwrap(), "image/png");
     }
 }

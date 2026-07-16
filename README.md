@@ -14,7 +14,7 @@ Volcengine TOS is the first supported backend. The storage layer is hidden behin
 - **Local cache** — uploads and downloads pass through an immutable verified cache.
 - **Safe restore** — modified worktree files are never overwritten without `--force`.
 - **Backend-neutral core** — repository logic does not depend on TOS-specific types or features.
-- **Web-ready metadata** — uploaded objects receive a detected HTTP `Content-Type`.
+- **Web-ready metadata** — uploaded objects receive a detected HTTP `Content-Type` and long-lived immutable caching.
 
 ## Installation
 
@@ -144,7 +144,6 @@ The ref is readable TOML:
 version = 1
 oid = "sha256:abcdef0123456789..."
 size = 1048576
-content_type = "image/png"
 ```
 
 Object bodies are addressed only by their digest:
@@ -161,7 +160,7 @@ Original paths and extensions are deliberately excluded from object keys. Renami
 
 ## Public Assets
 
-Shadow sets `Content-Type` during normal and multipart uploads. A public object can therefore be used by a browser even though its content-addressed URL has no filename extension.
+Shadow sets `Content-Type` and `Cache-Control: max-age=31536000, immutable` during normal and multipart uploads. A public object can therefore be used by a browser even though its content-addressed URL has no filename extension, and it can be cached without routine revalidation.
 
 Public access is controlled by the bucket policy, custom domain, or CDN—not by Shadow. Keep the bucket private unless anonymous object access is intentional.
 

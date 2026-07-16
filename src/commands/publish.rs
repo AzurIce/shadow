@@ -10,6 +10,7 @@ use std::path::PathBuf;
 struct PublishItem {
     relative: PathBuf,
     reference: ShadowRef,
+    content_type: String,
 }
 
 pub async fn run() -> Result<()> {
@@ -22,29 +23,22 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
     let worktree = repo.managed_files()?;
     let refs = repo.load_refs()?;
     let mut declared_types = HashMap::new();
-    for (relative, reference) in &refs {
-        if worktree.contains_key(relative) {
-            continue;
-        }
-        if let Some(content_type) = &reference.content_type {
-            register_content_type(&mut declared_types, &reference.oid, content_type, relative)?;
-        }
-    }
 
     let mut items = Vec::with_capacity(worktree.len());
     for (relative, source) in worktree {
-        let mut reference = repo.import_to_cache(&source)?;
-        let content_type = media_type::detect(&relative, &repo.cache_path(&reference.oid))?;
+        let reference = repo.import_to_cache(&source)?;
+        let content_type =
+            media_type::detect(&relative, Some(repo.cache_path(&reference.oid).as_path()))?;
         register_content_type(
             &mut declared_types,
             &reference.oid,
             &content_type,
             &relative,
         )?;
-        reference.content_type = Some(content_type);
         items.push(PublishItem {
             relative,
             reference,
+            content_type,
         });
     }
 
@@ -54,19 +48,11 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
     for item in items {
         let relative = item.relative;
         let reference = item.reference;
+        let content_type = item.content_type;
         let result = async {
-            if refs.get(&relative) == Some(&reference) {
-                println!("[published] {}", relative.display());
-                return Ok::<(), anyhow::Error>(());
-            }
+            let ref_unchanged = refs.get(&relative) == Some(&reference);
             let key = repo.blob_key(&reference.oid);
-            let content_type = reference
-                .content_type
-                .as_deref()
-                .context("publish ref is missing content type")?;
-            let options = UploadOptions {
-                content_type: content_type.to_string(),
-            };
+            let options = UploadOptions::new(&content_type);
             match store.stat(&key).await? {
                 Some(metadata) if metadata.size != reference.size => bail!(
                     "remote object {} has size {}, expected {}",
@@ -74,13 +60,14 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
                     metadata.size,
                     reference.size
                 ),
-                Some(metadata) if metadata.content_type.as_deref() == Some(content_type) => {
-                    println!("[deduplicated] {}", relative.display());
-                }
+                Some(metadata)
+                    if metadata.content_type.as_deref() == Some(content_type.as_str())
+                        && metadata.cache_control.as_deref()
+                            == Some(options.cache_control.as_str()) => {}
                 Some(_) => {
                     println!("[updating metadata] {}", relative.display());
                     store.update_metadata(&key, &options).await?;
-                    verify_remote(store, &key, &reference, content_type).await?;
+                    verify_remote(store, &key, &reference, &options).await?;
                 }
                 None => {
                     println!("[uploading] {}", relative.display());
@@ -92,11 +79,15 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
                             &options,
                         )
                         .await?;
-                    verify_remote(store, &key, &reference, content_type).await?;
+                    verify_remote(store, &key, &reference, &options).await?;
                 }
             }
             repo.write_ref(&relative, &reference)?;
-            println!("[published] {} -> {}", relative.display(), reference.oid);
+            if ref_unchanged {
+                println!("[published] {}", relative.display());
+            } else {
+                println!("[published] {} -> {}", relative.display(), reference.oid);
+            }
             Ok(())
         }
         .await;
@@ -119,7 +110,7 @@ async fn verify_remote(
     store: &dyn BlobStore,
     key: &crate::model::BlobKey,
     reference: &ShadowRef,
-    content_type: &str,
+    options: &UploadOptions,
 ) -> Result<()> {
     let metadata = store
         .stat(key)
@@ -128,8 +119,11 @@ async fn verify_remote(
     if metadata.size != reference.size {
         bail!("published object size does not match local ref");
     }
-    if metadata.content_type.as_deref() != Some(content_type) {
-        bail!("published object content type does not match local ref");
+    if metadata.content_type.as_deref() != Some(options.content_type.as_str()) {
+        bail!("published object content type does not match expected value");
+    }
+    if metadata.cache_control.as_deref() != Some(options.cache_control.as_str()) {
+        bail!("published object cache control does not match expected value");
     }
     Ok(())
 }
@@ -189,13 +183,13 @@ mod tests {
             Some("application/octet-stream")
         );
         assert_eq!(
-            reference.content_type.as_deref(),
-            Some("application/octet-stream")
+            store.cache_control(&key).as_deref(),
+            Some(crate::model::DEFAULT_CACHE_CONTROL)
         );
     }
 
     #[tokio::test]
-    async fn republishes_legacy_object_with_content_type() {
+    async fn repairs_existing_object_metadata_without_uploading_content() {
         let temp = TempDir::new().unwrap();
         fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
         fs::write(temp.path().join(".gitignore"), "# shadow\n*.png\n").unwrap();
@@ -206,23 +200,23 @@ mod tests {
         fs::write(temp.path().join("a.png"), bytes).unwrap();
         let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
             .unwrap();
-        let legacy_ref = repo.import_to_cache(&temp.path().join("a.png")).unwrap();
-        repo.write_ref(Path::new("a.png"), &legacy_ref).unwrap();
-        let key = BlobKey::for_object(&repo.config.name, &legacy_ref.oid);
+        let reference = repo.import_to_cache(&temp.path().join("a.png")).unwrap();
+        repo.write_ref(Path::new("a.png"), &reference).unwrap();
+        let key = BlobKey::for_object(&repo.config.name, &reference.oid);
         let store = MemoryStore::default();
-        store.insert_legacy(&key, bytes.to_vec());
+        store.insert_without_metadata(&key, bytes.to_vec());
 
         publish_with_store(&repo, &store).await.unwrap();
 
         assert_eq!(store.content_type(&key).as_deref(), Some("image/png"));
+        assert_eq!(
+            store.cache_control(&key).as_deref(),
+            Some(crate::model::DEFAULT_CACHE_CONTROL)
+        );
         assert_eq!(store.upload_count(), 0);
         assert_eq!(store.metadata_update_count(), 1);
-        let reference = repo
-            .load_refs()
-            .unwrap()
-            .remove(Path::new("a.png"))
-            .unwrap();
-        assert_eq!(reference.content_type.as_deref(), Some("image/png"));
+        let serialized = fs::read_to_string(repo.ref_path(Path::new("a.png")).unwrap()).unwrap();
+        assert!(!serialized.contains("content_type"));
     }
 
     #[tokio::test]

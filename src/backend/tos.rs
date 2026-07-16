@@ -100,6 +100,7 @@ impl TosStore {
     ) -> BackendResult<()> {
         let mut input = CreateMultipartUploadInput::new(&self.bucket, key);
         input.set_content_type(&options.content_type);
+        input.set_cache_control(&options.cache_control);
         let created = self
             .client
             .create_multipart_upload(&input)
@@ -167,6 +168,7 @@ impl BlobStore for TosStore {
                 size: output.content_length().max(0) as u64,
                 etag: Some(output.etag().to_string()),
                 content_type: nonempty(output.content_type()),
+                cache_control: nonempty(output.cache_control()),
             })),
             Err(error) if is_not_found(&error) => Ok(None),
             Err(error) => Err(map_tos_error(error)),
@@ -189,6 +191,7 @@ impl BlobStore for TosStore {
         })?;
         let mut input = PutObjectFromFileInput::new_with_file_path(&self.bucket, &key, source);
         input.set_content_type(&options.content_type);
+        input.set_cache_control(&options.cache_control);
         self.client
             .put_object_from_file(&input)
             .await
@@ -200,6 +203,7 @@ impl BlobStore for TosStore {
         let key = self.full_key(key);
         let mut input = SetObjectMetaInput::new(&self.bucket, &key);
         input.set_content_type(&options.content_type);
+        input.set_cache_control(&options.cache_control);
         input.set_metadata_directive(MetadataDirectiveReplace);
         self.client
             .set_object_meta(&input)

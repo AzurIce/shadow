@@ -33,7 +33,7 @@ Detection uses this order:
 2. the original worktree path extension for semantic formats such as CSS or JavaScript;
 3. `application/octet-stream` when no reliable type is available.
 
-The selected value is stored in the ref and verified with a remote `HEAD` request.
+The selected value is derived by the current Shadow version and verified with a remote `HEAD` request. It is not stored in the ref; changes to MIME inference are treated as Shadow behavior changes and `publish` repairs the remote metadata.
 
 ## Public URL
 
@@ -73,13 +73,15 @@ Private buckets can use presigned URLs, but those URLs expire and are not suitab
 
 ## Caching
 
-Content-addressed URLs are immutable by construction: changing a file changes its SHA-256 and therefore its URL. A public serving layer can safely attach a long-lived policy such as:
+Content-addressed URLs are immutable by construction: changing a file changes its SHA-256 and therefore its URL. Shadow sets this default object metadata:
 
 ```http
-Cache-Control: public, max-age=31536000, immutable
+Cache-Control: max-age=31536000, immutable
 ```
 
-Shadow currently manages `Content-Type`; cache policy and public access remain deployment concerns because the same storage backend may also hold private objects.
+The directive keeps a cached response fresh for one year and tells clients that the URL is immutable. It deliberately omits `public`: anonymous public responses remain cacheable, while authenticated responses are not explicitly opened to shared caches. Bucket access policy remains a separate deployment concern.
+
+Browsers may still evict cached data because of storage pressure or user action. Immutable caching prevents routine revalidation while an entry remains cached; it cannot guarantee permanent local retention.
 
 ## URL Discovery
 

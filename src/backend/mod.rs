@@ -78,6 +78,7 @@ pub mod testing {
     struct MemoryObject {
         data: Vec<u8>,
         content_type: Option<String>,
+        cache_control: Option<String>,
     }
 
     #[derive(Default)]
@@ -100,12 +101,21 @@ pub mod testing {
                 .and_then(|object| object.content_type.clone())
         }
 
-        pub fn insert_legacy(&self, key: &BlobKey, data: Vec<u8>) {
+        pub fn cache_control(&self, key: &BlobKey) -> Option<String> {
+            self.objects
+                .lock()
+                .unwrap()
+                .get(key.as_str())
+                .and_then(|object| object.cache_control.clone())
+        }
+
+        pub fn insert_without_metadata(&self, key: &BlobKey, data: Vec<u8>) {
             self.objects.lock().unwrap().insert(
                 key.as_str().to_string(),
                 MemoryObject {
                     data,
                     content_type: None,
+                    cache_control: None,
                 },
             );
         }
@@ -131,6 +141,7 @@ pub mod testing {
                     size: object.data.len() as u64,
                     etag: None,
                     content_type: object.content_type.clone(),
+                    cache_control: object.cache_control.clone(),
                 }))
         }
 
@@ -148,6 +159,7 @@ pub mod testing {
                 MemoryObject {
                     data,
                     content_type: Some(options.content_type.clone()),
+                    cache_control: Some(options.cache_control.clone()),
                 },
             );
             *self.uploads.lock().unwrap() += 1;
@@ -164,6 +176,7 @@ pub mod testing {
                 .get_mut(key.as_str())
                 .ok_or_else(|| BackendError::new(BackendErrorKind::NotFound, "object missing"))?;
             object.content_type = Some(options.content_type.clone());
+            object.cache_control = Some(options.cache_control.clone());
             *self.metadata_updates.lock().unwrap() += 1;
             Ok(())
         }

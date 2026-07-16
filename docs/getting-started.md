@@ -127,9 +127,9 @@ Publishing performs the following operations:
 
 1. imports a stable snapshot into the local cache;
 2. computes SHA-256 and size;
-3. detects a canonical HTTP media type;
+3. detects the HTTP media type for the current Shadow version;
 4. checks whether the remote object already exists;
-5. uploads missing content or repairs object metadata;
+5. uploads missing content or repairs `Content-Type` and immutable cache metadata;
 6. verifies the remote object;
 7. atomically writes the ref.
 

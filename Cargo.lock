@@ -1663,7 +1663,6 @@ dependencies = [
  "futures-core",
  "ignore",
  "infer",
- "mime",
  "mime_guess",
  "serde",
  "sha2 0.11.0",
