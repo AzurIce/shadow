@@ -1,40 +1,57 @@
 # Shadow
 
-Shadow is an explicit large-file storage tool for Git repositories. Git commits small ref files under `.shadow/refs/`; file bodies remain in the worktree, are ignored by Git, and are stored in an object-storage backend.
+Shadow is an explicit, content-addressed large-file storage tool for Git repositories.
 
-The first backend is Volcengine TOS. Shadow uses only flat object-storage operations so additional S3-style backends can be added behind the same `BlobStore` trait.
+Git tracks small TOML reference files under `.shadow/refs/`, while the file bodies stay in the worktree, remain ignored by Git, and are stored in object storage. Shadow never installs clean/smudge filters and never intercepts ordinary Git commands: publishing and restoring files are always explicit operations.
 
-## Managed Files
+Volcengine TOS is the first supported backend. The storage layer is hidden behind a small `BlobStore` interface so S3-compatible backends can be added without changing the repository workflow.
 
-Edit the repository root `.gitignore`. Every rule after the `# shadow` marker belongs to Shadow:
+## Why Shadow?
 
-```gitignore
-/target/
-.env
+- **Explicit workflow** — `status`, `publish`, and `restore` make data movement visible.
+- **Content-addressed storage** — SHA-256 object IDs provide deduplication and integrity checks.
+- **Git-friendly references** — small, readable TOML refs are committed instead of large file bodies.
+- **Local cache** — uploads and downloads pass through an immutable verified cache.
+- **Safe restore** — modified worktree files are never overwritten without `--force`.
+- **Backend-neutral core** — repository logic does not depend on TOS-specific types or features.
+- **Web-ready metadata** — uploaded objects receive a detected HTTP `Content-Type`.
 
-# shadow
-/assets/**/*.png
-/models/**/*.bin
+## Installation
+
+Shadow currently requires a Rust toolchain and can be installed directly from GitHub:
+
+```bash
+cargo install --git https://github.com/AzurIce/shadow
 ```
 
-## Commands
+To build a local checkout instead:
+
+```bash
+cargo build --release
+```
+
+The executable is written to `target/release/shadow` (`shadow.exe` on Windows).
+
+## Quick Start
+
+Initialize Shadow inside an existing Git repository:
+
+```bash
+shadow init
+```
+
+This creates:
 
 ```text
-shadow init
-shadow status [--remote] [paths...]
-shadow publish [paths...]
-shadow restore [--force] [paths...]
-shadow remove <paths...>
-shadow verify [--remote]
+shadow.toml
+.shadow/
+├── .gitignore
+├── refs/
+├── cache/
+└── tmp/
 ```
 
-- `status` compares worktree files, refs, cache, and optionally the remote.
-- `publish` treats the worktree as authoritative, deduplicates by SHA-256, detects the media type, uploads missing blobs with `Content-Type`, and writes refs only after the remote object is available.
-- `restore` treats refs as authoritative, downloads through the local cache, verifies SHA-256, and refuses to overwrite modified files unless `--force` is used.
-
-## Configuration
-
-`shadow init` creates `shadow.toml` at the Git repository root:
+Configure a Volcengine TOS bucket in `shadow.toml`:
 
 ```toml
 version = 1
@@ -44,18 +61,118 @@ name = "my-project"
 type = "volcengine_tos"
 endpoint = "https://tos-cn-beijing.volces.com"
 region = "cn-beijing"
-bucket = "example-shadow"
+bucket = "my-shadow-bucket"
 prefix = "shadow"
 ```
 
-TOS credentials are loaded from:
+Provide credentials through the process environment or a repository-root `.env` file:
 
-```text
-TOS_ACCESS_KEY
-TOS_SECRET_KEY
-TOS_SECURITY_TOKEN
+```dotenv
+TOS_ACCESS_KEY=your-access-key
+TOS_SECRET_KEY=your-secret-key
+# TOS_SECURITY_TOKEN=your-temporary-security-token
 ```
 
-Shadow loads these variables from `.env` at the Git repository root. Variables already present in the process environment take precedence over values in `.env`.
+Keep `.env` outside the Shadow-managed section and ignored by Git.
 
-See [the design documentation](docs/design.md) and [the TOS backend design](docs/backends/volcengine-tos.md) for the complete model.
+Declare managed files after the exact `# shadow` marker in the root `.gitignore`:
+
+```gitignore
+/target/
+.env
+
+# shadow
+/assets/**/*.png
+/videos/**/*.mp4
+/models/**/*.bin
+```
+
+Everything after the marker is interpreted as the Shadow rule section, including Gitignore negation rules.
+
+Inspect, publish, and commit the generated refs:
+
+```bash
+shadow status
+shadow publish
+git add .gitignore shadow.toml .shadow/refs
+git commit -m "Track large assets with Shadow"
+```
+
+After cloning the repository elsewhere, restore missing worktree files with:
+
+```bash
+shadow restore
+```
+
+See the [getting-started guide](docs/getting-started.md) for the complete workflow.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `shadow init` | Initialize Shadow in the current Git repository. |
+| `shadow status [--remote] [paths...]` | Compare worktree files, refs, cache, and optionally remote objects. |
+| `shadow publish [paths...]` | Treat the worktree as authoritative, upload objects, and write refs. |
+| `shadow restore [--force] [paths...]` | Treat refs as authoritative and materialize files through the cache. |
+| `shadow remove <paths...>` | Remove refs while keeping worktree files and remote objects. |
+| `shadow verify [--remote]` | Validate repository invariants and return a failing exit code on issues. |
+
+`status` is informational and supports path filtering. `verify` checks the entire repository, hashes existing cache objects, and is suitable for CI.
+
+## Repository Model
+
+For a managed file such as `assets/hero.png`, Git stores a ref at:
+
+```text
+.shadow/refs/assets/hero.png.ref
+```
+
+The ref is readable TOML:
+
+```toml
+version = 1
+oid = "sha256:abcdef0123456789..."
+size = 1048576
+content_type = "image/png"
+```
+
+Object bodies are addressed only by their digest:
+
+```text
+Local cache:
+.shadow/cache/objects/sha256/ab/cdef...
+
+Remote object key:
+<prefix>/<name>/objects/sha256/ab/cdef...
+```
+
+Original paths and extensions are deliberately excluded from object keys. Renaming a file does not upload its bytes again, and identical content is stored once within a project namespace.
+
+## Public Assets
+
+Shadow sets `Content-Type` during normal and multipart uploads. A public object can therefore be used by a browser even though its content-addressed URL has no filename extension.
+
+Public access is controlled by the bucket policy, custom domain, or CDN—not by Shadow. Keep the bucket private unless anonymous object access is intentional.
+
+See [serving public assets](docs/public-assets.md) for URL construction, TOS access policy considerations, and caching guidance.
+
+## Safety Model
+
+- `publish` writes a ref only after the remote object is confirmed.
+- `restore` verifies size and SHA-256 before promoting a download into the cache.
+- A modified worktree file requires `restore --force` before it can be replaced.
+- Cache objects are treated as immutable and are never exposed as writable hard links.
+- Credentials are read from environment variables and are never written into refs.
+- Remote object keys are generated from validated project names and SHA-256 IDs.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Serving public assets](docs/public-assets.md)
+- [Core design](docs/design.md)
+- [Volcengine TOS backend](docs/backends/volcengine-tos.md)
+
+## Project Status
+
+Shadow is an early-stage project. The current ref and configuration formats are versioned, but command-line behavior and backend interfaces may still evolve before a stable release.

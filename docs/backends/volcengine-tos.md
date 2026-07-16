@@ -136,7 +136,7 @@ shadow-name = my-models
 
 远端元数据用于诊断，不作为唯一真相来源。对象身份仍由 key 和下载后的 SHA-256 校验确定。
 
-`Content-Type` 是对象的 HTTP 表示元数据，由 `HEAD` 验证并与 ref 对照。旧版本已上传但没有正确 `Content-Type` 的对象，在再次执行 `shadow publish` 时通过 TOS `SetObjectMeta` 原地修复，不重新上传内容，也不产生新的 blob URL。未来 S3 后端可以在 trait 后使用服务端 self-copy 提供相同语义。
+`Content-Type` 是对象的 HTTP 表示元数据，由 `HEAD` 验证并与 ref 对照。对象元数据不一致时，`shadow publish` 通过 TOS `SetObjectMeta` 原地修复，不重新上传内容。未来 S3 后端可以在 trait 后使用服务端 self-copy 提供相同语义。
 
 不能依赖 ETag 等于内容 MD5。multipart upload 的 ETag 通常不代表整个文件的单一内容摘要。
 

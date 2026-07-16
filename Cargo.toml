@@ -2,6 +2,9 @@
 name = "shadow"
 version = "0.1.0"
 edition = "2024"
+description = "Explicit content-addressed large-file storage for Git repositories"
+repository = "https://github.com/AzurIce/shadow"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.103"

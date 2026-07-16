@@ -135,7 +135,7 @@ content_type = "image/png"
 - `version`：ref 格式版本。
 - `oid`：算法名称和十六进制摘要。
 - `size`：原始文件字节数。
-- `content_type`：对象发布时使用的规范 HTTP 媒体类型。旧 ref 可以省略，下一次 `publish` 会补齐。
+- `content_type`：对象发布时使用的规范 HTTP 媒体类型。
 
 工作区路径由 ref 自身的位置表达，不在内容中重复保存。remote 也不写入 ref，同一 ref 将来可以上传到多个后端。
 
@@ -163,7 +163,7 @@ sha256:<64 lowercase hex characters>
 
 `name` 保存在根目录 `shadow.toml`，`shadow init` 默认使用 Git 仓库目录名。它用于隔离共享 bucket/prefix 中的不同项目，同一 bucket/prefix 下必须保持唯一。对象键不包含原始文件路径，因此文件重命名不会重新上传内容。
 
-项目首次发布后不应直接修改 `name`。修改 name 相当于切换到一个新的远端命名空间，已有 refs 将无法在新位置找到旧对象，除非重新发布或执行专门的迁移。
+项目首次发布后不应直接修改 `name`。修改 name 相当于切换到一个新的远端命名空间，已有 refs 将无法在新位置找到对象，必须在新命名空间中重新发布。
 
 ## 8. 本地缓存
 
