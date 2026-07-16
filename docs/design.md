@@ -213,9 +213,9 @@ cache 写入流程：
 4. 创建根目录 `shadow.toml` 和 `.shadow/.gitignore`。
 5. 在根 `.gitignore` 末尾创建 `# shadow` 标记。
 
-### `shadow status [paths...]`
+### `shadow status`
 
-`status` 是整个工作流的入口。它将 Shadow 区域匹配到的工作文件与 `.shadow/refs/` 中的引用进行配对，并报告：
+`status` 是整个工作流的入口。它将 Shadow 区域匹配到的工作文件与 `.shadow/refs/` 中的引用进行配对，并按接近 `git status` 的分组形式只报告需要处理的状态：
 
 - `Unpublished`：有工作文件，没有 ref，建议 `shadow publish`。
 - `Published`：工作文件哈希与 ref 一致。
@@ -223,13 +223,13 @@ cache 写入流程：
 - `Missing`：有 ref，没有工作文件，建议 `shadow restore`。
 - `Orphaned`：有 ref，但路径不再属于 Shadow 区域。
 
-默认只检查本地工作文件、ref 和 cache。`--remote` 额外通过后端查询 ref 对应对象是否存在和大小是否正确。
+健康的 `Published` 文件不逐项输出；没有问题时只输出一条 clean 信息。默认检查本地工作文件与 ref，`--remote` 额外查询对象是否存在，以及大小和 `Content-Type` 是否正确。
 
-### `shadow publish [paths...]`
+### `shadow publish`
 
 `publish` 以当前工作文件为真，负责把本地内容变成可由 ref 引用的已发布对象：
 
-1. 扫描 Shadow 区域匹配的工作文件，可由路径参数限制范围。
+1. 扫描 Shadow 区域匹配的全部工作文件。
 2. 处理 `Unpublished` 和 `Modified` 文件；`Published` 文件直接跳过。
 3. 将工作文件流式导入 cache，同时计算 SHA-256 和大小。
 4. 使用 hash 生成远端对象 key。
@@ -242,7 +242,7 @@ cache 写入流程：
 
 因此，同一内容即使出现在多个路径中，也只上传一次。上传成功但本地 ref 写入失败时，再次运行 publish 会通过远端 `stat` 跳过上传并补写 ref。
 
-### `shadow restore [paths...]`
+### `shadow restore`
 
 `restore` 以 ref 为真，默认只恢复 `Missing` 文件：
 
@@ -255,13 +255,19 @@ cache 写入流程：
 
 工作文件已经存在但与 ref 不同时，普通 restore 必须拒绝覆盖。只有显式传入 `--force` 才允许以 ref 替换工作文件。
 
-### `shadow remove <paths...>`
+`--force` 对整个仓库生效，因此执行前应先通过 `shadow status` 检查所有 `Modified` 文件。
 
-删除 published ref，但默认保留工作文件和远端对象。管理规则由用户手动维护，命令不修改 `.gitignore`。
+### 删除 ref
 
-### `shadow verify`
+Shadow 不提供专用 remove 命令。ref 是普通 Git 文件，使用 `git rm .shadow/refs/<path>.ref` 删除。工作文件、远端对象和 `.gitignore` 规则均保持不变，由用户显式处理。
 
-验证 refs、cache、工作文件和 Git ignore 不变量。`--remote` 额外验证远端对象。
+### `shadow check`
+
+验证 refs、cache、工作文件和 Git ignore 不变量，发现问题时返回非零退出码。`--remote` 额外验证远端对象。
+
+### 全局 `-C <path>`
+
+所有命令支持类似 Git 的全局 `-C` 参数。Shadow 在仓库发现、`.env` 加载和配置读取之前切换到指定目录。子命令不再接受路径过滤参数，所有操作都以发现到的整个仓库为边界。
 
 ## 11. 后端抽象
 
@@ -369,7 +375,7 @@ GC 至少需要：
 1. `init`
 2. Git ignore Shadow 区域解析
 3. ref 和 cache
-4. 本地 `status/verify`
+4. 本地 `status/check`
 5. 火山引擎 TOS 的 `BlobStore`
 6. `publish`
 7. `restore`

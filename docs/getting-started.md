@@ -117,11 +117,10 @@ Typical states are:
 | `Missing` | A ref exists but the worktree file does not. |
 | `Orphaned` | A ref exists for a path no longer covered by Shadow rules. |
 
-Publish all managed files or selected paths:
+Publish all managed files:
 
 ```bash
 shadow publish
-shadow publish assets/logo.png recordings/
 ```
 
 Publishing performs the following operations:
@@ -152,36 +151,49 @@ shadow restore
 
 Shadow downloads missing objects into `.shadow/tmp/`, validates SHA-256 and size, promotes them into the cache, and then materializes worktree files.
 
-If a worktree file exists but differs from its ref, normal restore refuses to overwrite it. Replace it only when the ref is intentionally authoritative:
+If a worktree file exists but differs from its ref, normal restore refuses to overwrite it. Replace modified files only when all refs are intentionally authoritative:
 
 ```bash
-shadow restore --force assets/logo.png
+shadow restore --force
 ```
+
+`--force` applies to the entire repository. Run `shadow status` first and review every modified path.
 
 ## 8. Status and Verification
 
-`status` is an informational command and can inspect selected paths:
+`status` is an informational command. It hides healthy published files and groups only actionable states:
 
 ```bash
-shadow status assets/
-shadow status --remote assets/
+shadow status
+shadow status --remote
 ```
 
-`verify` checks the entire repository and exits unsuccessfully when it finds an issue:
+`check` validates the entire repository and exits unsuccessfully when it finds an issue:
 
 ```bash
-shadow verify
-shadow verify --remote
+shadow check
+shadow check --remote
 ```
 
-Use `verify --remote` in CI when credentials and network access are available. A missing local cache entry is allowed because cache contents can be restored; an existing cache object with invalid content is an error.
+Use `check --remote` in CI when credentials and network access are available. A missing local cache entry is allowed because cache contents can be restored; an existing cache object with invalid content is an error.
 
-## 9. Remove a Reference
+## 9. Work with Another Repository
 
-Remove refs while keeping worktree files and remote blobs:
+All commands accept a global Git-style `-C` option:
 
 ```bash
-shadow remove assets/old-logo.png
+shadow -C ../another-repository status
+shadow -C ../another-repository publish
 ```
 
-Update the Shadow section in `.gitignore` manually when the path should no longer be managed. Remote object deletion and garbage collection are intentionally outside the current command set.
+`-C` changes the working directory before Shadow discovers the Git root, loads `.env`, or reads `shadow.toml`.
+
+## 10. Remove a Reference
+
+Refs are ordinary Git-tracked files. Remove one with Git:
+
+```bash
+git rm .shadow/refs/assets/old-logo.png.ref
+```
+
+Update the Shadow section in `.gitignore` manually when the worktree path should no longer be managed. Remote object deletion and garbage collection are intentionally outside the current command set.

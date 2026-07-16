@@ -1,25 +1,18 @@
 use crate::backend::{self, BlobStore};
 use crate::context;
 use crate::hash::hash_file;
-use crate::repository::{Repository, normalize_filters, selected};
+use crate::repository::Repository;
 use anyhow::{Result, bail};
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-pub async fn run(paths: Vec<PathBuf>, force: bool) -> Result<()> {
+pub async fn run(force: bool) -> Result<()> {
     let repo = context::discover()?;
-    let filters = normalize_filters(&repo.root, &paths)?;
-    restore_with_factory(&repo, &filters, force, || backend::open(&repo.config)).await
+    restore_with_factory(&repo, force, || backend::open(&repo.config)).await
 }
 
-async fn restore_with_factory<F>(
-    repo: &Repository,
-    filters: &[PathBuf],
-    force: bool,
-    mut factory: F,
-) -> Result<()>
+async fn restore_with_factory<F>(repo: &Repository, force: bool, mut factory: F) -> Result<()>
 where
     F: FnMut() -> Result<Arc<dyn BlobStore>>,
 {
@@ -29,9 +22,6 @@ where
     let mut failures = Vec::new();
 
     for (relative, reference) in refs {
-        if !selected(&relative, filters) {
-            continue;
-        }
         processed += 1;
         let result = async {
             if !repo.is_managed_path(&relative) {
@@ -113,9 +103,7 @@ mod tests {
         let repo = repository(&temp);
         fs::write(temp.path().join("a.bin"), b"hello").unwrap();
         let store = Arc::new(MemoryStore::default());
-        publish_with_store(&repo, &[], store.as_ref())
-            .await
-            .unwrap();
+        publish_with_store(&repo, store.as_ref()).await.unwrap();
         let reference = repo
             .load_refs()
             .unwrap()
@@ -125,7 +113,7 @@ mod tests {
         fs::remove_file(repo.cache_path(&reference.oid)).unwrap();
 
         let opened = Arc::clone(&store);
-        restore_with_factory(&repo, &[], false, move || {
+        restore_with_factory(&repo, false, move || {
             Ok(Arc::clone(&opened) as Arc<dyn BlobStore>)
         })
         .await
@@ -139,13 +127,11 @@ mod tests {
         let repo = repository(&temp);
         fs::write(temp.path().join("a.bin"), b"hello").unwrap();
         let store = Arc::new(MemoryStore::default());
-        publish_with_store(&repo, &[], store.as_ref())
-            .await
-            .unwrap();
+        publish_with_store(&repo, store.as_ref()).await.unwrap();
         fs::write(temp.path().join("a.bin"), b"changed").unwrap();
 
         let opened = Arc::clone(&store);
-        let result = restore_with_factory(&repo, &[], false, move || {
+        let result = restore_with_factory(&repo, false, move || {
             Ok(Arc::clone(&opened) as Arc<dyn BlobStore>)
         })
         .await;

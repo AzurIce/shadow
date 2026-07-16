@@ -2,9 +2,9 @@ use crate::backend::{self, BlobStore};
 use crate::context;
 use crate::media_type;
 use crate::model::{ObjectId, ShadowRef, UploadOptions};
-use crate::repository::{Repository, normalize_filters, selected};
+use crate::repository::Repository;
 use anyhow::{Context, Result, bail};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 struct PublishItem {
@@ -12,31 +12,18 @@ struct PublishItem {
     reference: ShadowRef,
 }
 
-pub async fn run(paths: Vec<PathBuf>) -> Result<()> {
+pub async fn run() -> Result<()> {
     let repo = context::discover()?;
-    let filters = normalize_filters(&repo.root, &paths)?;
     let store = backend::open(&repo.config)?;
-    publish_with_store(&repo, &filters, store.as_ref()).await
+    publish_with_store(&repo, store.as_ref()).await
 }
 
-pub async fn publish_with_store(
-    repo: &Repository,
-    filters: &[PathBuf],
-    store: &dyn BlobStore,
-) -> Result<()> {
+pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Result<()> {
     let worktree = repo.managed_files()?;
     let refs = repo.load_refs()?;
-    let candidates: Vec<_> = worktree
-        .into_iter()
-        .filter(|(relative, _)| selected(relative, filters))
-        .collect();
-    let replacing: BTreeSet<_> = candidates
-        .iter()
-        .map(|(relative, _)| relative.clone())
-        .collect();
     let mut declared_types = HashMap::new();
     for (relative, reference) in &refs {
-        if replacing.contains(relative) {
+        if worktree.contains_key(relative) {
             continue;
         }
         if let Some(content_type) = &reference.content_type {
@@ -44,8 +31,8 @@ pub async fn publish_with_store(
         }
     }
 
-    let mut items = Vec::with_capacity(candidates.len());
-    for (relative, source) in candidates {
+    let mut items = Vec::with_capacity(worktree.len());
+    for (relative, source) in worktree {
         let mut reference = repo.import_to_cache(&source)?;
         let content_type = media_type::detect(&relative, &repo.cache_path(&reference.oid))?;
         register_content_type(
@@ -189,7 +176,7 @@ mod tests {
         let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
             .unwrap();
         let store = MemoryStore::default();
-        publish_with_store(&repo, &[], &store).await.unwrap();
+        publish_with_store(&repo, &store).await.unwrap();
         let reference = repo
             .load_refs()
             .unwrap()
@@ -225,7 +212,7 @@ mod tests {
         let store = MemoryStore::default();
         store.insert_legacy(&key, bytes.to_vec());
 
-        publish_with_store(&repo, &[], &store).await.unwrap();
+        publish_with_store(&repo, &store).await.unwrap();
 
         assert_eq!(store.content_type(&key).as_deref(), Some("image/png"));
         assert_eq!(store.upload_count(), 0);
@@ -249,7 +236,7 @@ mod tests {
             .unwrap();
         let store = MemoryStore::default();
 
-        let error = publish_with_store(&repo, &[], &store).await.unwrap_err();
+        let error = publish_with_store(&repo, &store).await.unwrap_err();
 
         assert!(error.to_string().contains("conflicting content types"));
     }

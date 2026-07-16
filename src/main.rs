@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -11,6 +11,9 @@ use shadow::commands;
     about = "Explicit large-file storage for Git repositories"
 )]
 struct Cli {
+    /// Run as if Shadow was started in this directory
+    #[arg(short = 'C', global = true, value_name = "PATH", default_value = ".")]
+    directory: PathBuf,
     #[command(subcommand)]
     command: Command,
 }
@@ -19,24 +22,20 @@ struct Cli {
 enum Command {
     /// Initialize Shadow in the current Git repository
     Init,
-    /// Compare managed worktree files, refs, cache, and optionally the remote
+    /// Show managed worktree changes and optionally remote issues
     Status {
-        paths: Vec<PathBuf>,
         #[arg(long)]
         remote: bool,
     },
     /// Publish worktree content and create or update refs
-    Publish { paths: Vec<PathBuf> },
+    Publish,
     /// Restore worktree files from refs
     Restore {
-        paths: Vec<PathBuf>,
         #[arg(long)]
         force: bool,
     },
-    /// Remove refs while keeping worktree and remote objects
-    Remove { paths: Vec<PathBuf> },
-    /// Verify local invariants and optionally remote objects
-    Verify {
+    /// Check local invariants and optionally remote objects
+    Check {
         #[arg(long)]
         remote: bool,
     },
@@ -45,12 +44,32 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    std::env::set_current_dir(&cli.directory)
+        .with_context(|| format!("failed to enter {}", cli.directory.display()))?;
     match cli.command {
         Command::Init => commands::init::run(),
-        Command::Status { paths, remote } => commands::status::run(paths, remote).await,
-        Command::Publish { paths } => commands::publish::run(paths).await,
-        Command::Restore { paths, force } => commands::restore::run(paths, force).await,
-        Command::Remove { paths } => commands::remove::run(paths),
-        Command::Verify { remote } => commands::verify::run(remote).await,
+        Command::Status { remote } => commands::status::run(remote).await,
+        Command::Publish => commands::publish::run().await,
+        Command::Restore { force } => commands::restore::run(force).await,
+        Command::Check { remote } => commands::check::run(remote).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_global_directory() {
+        let cli = Cli::try_parse_from(["shadow", "-C", "repo", "status"]).unwrap();
+        assert_eq!(cli.directory, PathBuf::from("repo"));
+        assert!(matches!(cli.command, Command::Status { remote: false }));
+    }
+
+    #[test]
+    fn rejects_removed_commands_and_path_filters() {
+        assert!(Cli::try_parse_from(["shadow", "verify"]).is_err());
+        assert!(Cli::try_parse_from(["shadow", "remove", "asset.bin"]).is_err());
+        assert!(Cli::try_parse_from(["shadow", "status", "asset.bin"]).is_err());
     }
 }

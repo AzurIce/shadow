@@ -106,18 +106,29 @@ shadow restore
 
 See the [getting-started guide](docs/getting-started.md) for the complete workflow.
 
+Run any command against another repository without changing the shell directory:
+
+```bash
+shadow -C ../another-repository status
+```
+
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `shadow init` | Initialize Shadow in the current Git repository. |
-| `shadow status [--remote] [paths...]` | Compare worktree files, refs, cache, and optionally remote objects. |
-| `shadow publish [paths...]` | Treat the worktree as authoritative, upload objects, and write refs. |
-| `shadow restore [--force] [paths...]` | Treat refs as authoritative and materialize files through the cache. |
-| `shadow remove <paths...>` | Remove refs while keeping worktree files and remote objects. |
-| `shadow verify [--remote]` | Validate repository invariants and return a failing exit code on issues. |
+| `shadow status [--remote]` | Show unpublished, missing, orphaned, and optionally remote issues. |
+| `shadow publish` | Treat the worktree as authoritative, upload objects, and write refs. |
+| `shadow restore [--force]` | Treat refs as authoritative and materialize files through the cache. |
+| `shadow check [--remote]` | Validate repository invariants and return a failing exit code on issues. |
 
-`status` is informational and supports path filtering. `verify` checks the entire repository, hashes existing cache objects, and is suitable for CI.
+All commands accept the global `-C <path>` option. `status` follows the shape of `git status`: healthy published files are hidden and only actionable groups are printed. `check` hashes existing cache objects, checks the entire repository, and is suitable for CI.
+
+Refs are ordinary tracked files. Remove one explicitly with Git instead of a Shadow-specific command:
+
+```bash
+git rm .shadow/refs/assets/old-logo.png.ref
+```
 
 ## Repository Model
 

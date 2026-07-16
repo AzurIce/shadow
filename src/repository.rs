@@ -168,15 +168,6 @@ impl Repository {
         write_atomic(&target, content.as_bytes())
     }
 
-    pub fn remove_ref(&self, relative: &Path) -> Result<bool> {
-        let path = self.ref_path(relative)?;
-        if !path.exists() {
-            return Ok(false);
-        }
-        fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
-        Ok(true)
-    }
-
     pub fn import_to_cache(&self, source: &Path) -> Result<ShadowRef> {
         fs::create_dir_all(self.tmp_dir())?;
         let temporary = self.tmp_dir().join(format!("{}.import", Uuid::new_v4()));
@@ -327,36 +318,6 @@ fn source_path_from_ref(relative_ref: &Path) -> Option<PathBuf> {
     Some(source)
 }
 
-pub fn normalize_filters(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let cwd = std::env::current_dir()?;
-    let mut filters = Vec::new();
-    for path in paths {
-        let absolute = if path.is_absolute() {
-            path.clone()
-        } else {
-            cwd.join(path)
-        };
-        let normalized = normalize_lexically(&absolute)?;
-        let relative = normalized.strip_prefix(root).with_context(|| {
-            format!(
-                "path {} is outside repository {}",
-                path.display(),
-                root.display()
-            )
-        })?;
-        validate_relative_path(relative)?;
-        filters.push(relative.to_path_buf());
-    }
-    Ok(filters)
-}
-
-pub fn selected(relative: &Path, filters: &[PathBuf]) -> bool {
-    filters.is_empty()
-        || filters
-            .iter()
-            .any(|filter| relative == filter || relative.starts_with(filter))
-}
-
 fn validate_relative_path(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         bail!("managed path must be a non-empty relative path");
@@ -371,24 +332,6 @@ fn validate_relative_path(path: &Path) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn normalize_lexically(path: &Path) -> Result<PathBuf> {
-    let mut prefix = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(value) => prefix.push(value.as_os_str()),
-            Component::RootDir => prefix.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !prefix.pop() {
-                    bail!("path escapes filesystem root: {}", path.display());
-                }
-            }
-            Component::Normal(value) => prefix.push(value),
-        }
-    }
-    Ok(prefix)
 }
 
 fn write_atomic(target: &Path, content: &[u8]) -> Result<()> {

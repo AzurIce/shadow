@@ -1,10 +1,11 @@
 use crate::backend::{self, BlobStore};
 use crate::context;
 use crate::hash::hash_file;
-use crate::repository::{Repository, normalize_filters, selected};
+use crate::repository::Repository;
 use anyhow::Result;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::fmt::Write as _;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalState {
@@ -18,42 +19,23 @@ pub enum LocalState {
 pub struct StatusRecord {
     pub path: PathBuf,
     pub state: LocalState,
-    pub cache: &'static str,
     pub remote: Option<&'static str>,
 }
 
-pub async fn run(paths: Vec<PathBuf>, check_remote: bool) -> Result<()> {
+pub async fn run(check_remote: bool) -> Result<()> {
     let repo = context::discover()?;
-    let filters = normalize_filters(&repo.root, &paths)?;
     let store = if check_remote {
         Some(backend::open(&repo.config)?)
     } else {
         None
     };
-    let records = collect(&repo, &filters, store.as_deref()).await?;
-    if records.is_empty() {
-        println!("No managed files or refs.");
-        return Ok(());
-    }
-    for record in records {
-        let remote = record
-            .remote
-            .map(|value| format!(" remote={value}"))
-            .unwrap_or_default();
-        println!(
-            "{:<11} {} cache={}{}",
-            format!("{:?}", record.state),
-            record.path.display(),
-            record.cache,
-            remote
-        );
-    }
+    let records = collect(&repo, store.as_deref()).await?;
+    print!("{}", render(&records));
     Ok(())
 }
 
 pub async fn collect(
     repo: &Repository,
-    filters: &[PathBuf],
     store: Option<&dyn BlobStore>,
 ) -> Result<Vec<StatusRecord>> {
     let worktree = repo.managed_files()?;
@@ -62,9 +44,6 @@ pub async fn collect(
     let mut records = Vec::new();
 
     for path in paths {
-        if !selected(&path, filters) {
-            continue;
-        }
         let body = worktree.get(&path);
         let reference = refs.get(&path);
         let state = match (body, reference) {
@@ -81,11 +60,6 @@ pub async fn collect(
                 }
             }
             (None, None) => continue,
-        };
-        let cache = match reference {
-            None => "n/a",
-            Some(reference) if repo.cache_present(reference)? => "present",
-            Some(_) => "missing",
         };
         let remote = match (reference, store) {
             (Some(reference), Some(store)) => {
@@ -107,19 +81,74 @@ pub async fn collect(
         records.push(StatusRecord {
             path,
             state,
-            cache,
             remote,
         });
     }
     Ok(records)
 }
 
-pub fn state_requires_attention(state: LocalState) -> bool {
-    state != LocalState::Published
+pub fn render(records: &[StatusRecord]) -> String {
+    let mut output = String::new();
+    write_group(
+        &mut output,
+        "Changes not published:",
+        "  (run \"shadow publish\" to publish worktree content)",
+        records.iter().filter_map(|record| match record.state {
+            LocalState::Unpublished => Some(("new file", &record.path)),
+            LocalState::Modified => Some(("modified", &record.path)),
+            _ => None,
+        }),
+    );
+    write_group(
+        &mut output,
+        "Files missing from the worktree:",
+        "  (run \"shadow restore\" to restore them)",
+        records.iter().filter_map(|record| {
+            (record.state == LocalState::Missing).then_some(("missing", &record.path))
+        }),
+    );
+    write_group(
+        &mut output,
+        "Orphaned references:",
+        "  (remove the corresponding files under .shadow/refs)",
+        records.iter().filter_map(|record| {
+            (record.state == LocalState::Orphaned).then_some(("orphaned", &record.path))
+        }),
+    );
+    write_group(
+        &mut output,
+        "Remote object issues:",
+        "  (run \"shadow publish\" to repair remote objects)",
+        records.iter().filter_map(|record| match record.remote {
+            Some("missing") => Some(("missing", &record.path)),
+            Some("invalid") => Some(("invalid", &record.path)),
+            _ => None,
+        }),
+    );
+    if output.is_empty() {
+        output.push_str("Shadow working tree clean.\n");
+    }
+    output
 }
 
-pub fn path_display(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+fn write_group<'a>(
+    output: &mut String,
+    heading: &str,
+    hint: &str,
+    entries: impl Iterator<Item = (&'static str, &'a PathBuf)>,
+) {
+    let entries: Vec<_> = entries.collect();
+    if entries.is_empty() {
+        return;
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    writeln!(output, "{heading}").unwrap();
+    writeln!(output, "{hint}").unwrap();
+    for (label, path) in entries {
+        writeln!(output, "\t{label:<10} {}", path.display()).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -141,12 +170,51 @@ mod tests {
         let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
             .unwrap();
         let store = MemoryStore::default();
-        publish_with_store(&repo, &[], &store).await.unwrap();
+        publish_with_store(&repo, &store).await.unwrap();
 
         fs::write(temp.path().join("a.bin"), b"changed").unwrap();
         fs::remove_file(temp.path().join("b.bin")).unwrap();
-        let records = collect(&repo, &[], None).await.unwrap();
+        let records = collect(&repo, None).await.unwrap();
         assert_eq!(records[0].state, LocalState::Modified);
         assert_eq!(records[1].state, LocalState::Missing);
+    }
+
+    #[test]
+    fn renders_only_actionable_groups() {
+        let records = vec![
+            StatusRecord {
+                path: PathBuf::from("published.bin"),
+                state: LocalState::Published,
+                remote: Some("ok"),
+            },
+            StatusRecord {
+                path: PathBuf::from("new.bin"),
+                state: LocalState::Unpublished,
+                remote: None,
+            },
+            StatusRecord {
+                path: PathBuf::from("missing.bin"),
+                state: LocalState::Missing,
+                remote: Some("missing"),
+            },
+        ];
+
+        let output = render(&records);
+
+        assert!(output.contains("Changes not published:"));
+        assert!(output.contains("new.bin"));
+        assert!(output.contains("Files missing from the worktree:"));
+        assert!(output.contains("Remote object issues:"));
+        assert!(!output.contains("published.bin"));
+    }
+
+    #[test]
+    fn renders_clean_message() {
+        let records = vec![StatusRecord {
+            path: PathBuf::from("published.bin"),
+            state: LocalState::Published,
+            remote: None,
+        }];
+        assert_eq!(render(&records), "Shadow working tree clean.\n");
     }
 }
