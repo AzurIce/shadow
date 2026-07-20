@@ -344,7 +344,7 @@ pub struct RestoreService {
 
 v1 采用 append-only：上传对象后，普通命令不删除远端对象。删除 ref 不等于删除对象。
 
-未来 GC 使用集合差：
+GC 使用集合差：
 
 ```text
 远端仓库命名空间中的全部对象
@@ -356,10 +356,10 @@ GC 候选对象
 
 不维护提交到 Git 的“所有曾上传对象列表”。对象存储自身的 list API 就是远端库存来源。
 
-GC 至少需要：
+GC 命令实现以下安全约束：
 
-- 默认 `--dry-run`
-- 宽限期，例如 30 天
+- 默认 dry-run，只有 `--delete` 才执行删除
+- 默认 30 天宽限期，可通过 `--grace-days` 调整
 - 项目 name 命名空间隔离
 - 删除前再次计算可达集合
 - 分批删除与失败清单
@@ -378,11 +378,11 @@ GC 至少需要：
 5. 火山引擎 TOS 的 `BlobStore`
 6. `publish`
 7. `restore`
+8. 远端 GC
 
 以下能力延后：
 
 - 多后端配置和多 remote
-- 远端 GC
 - 历史重写与 purge
 - 自动 Git hooks
 - 跨仓库对象共享

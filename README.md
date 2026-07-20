@@ -121,6 +121,7 @@ shadow -C ../another-repository status
 | `shadow publish` | Treat the worktree as authoritative, upload objects, and write refs. |
 | `shadow restore [--force]` | Treat refs as authoritative and materialize files through the cache. |
 | `shadow check [--remote]` | Validate repository invariants and return a failing exit code on issues. |
+| `shadow gc [--delete] [--grace-days <days>]` | Compare reachable Git refs with remote inventory and remove unreferenced objects. |
 
 All commands accept the global `-C <path>` option. `status` follows the shape of `git status`: healthy published files are hidden and only actionable groups are printed. `check` hashes existing cache objects, checks the entire repository, and is suitable for CI.
 
@@ -129,6 +130,23 @@ Refs are ordinary tracked files. Remove one explicitly with Git instead of a Sha
 ```bash
 git rm .shadow/refs/assets/old-logo.png.ref
 ```
+
+Preview remote garbage collection after refs have been removed from all reachable Git history:
+
+```bash
+shadow gc
+```
+
+The default 30-day grace period protects recently uploaded objects. After reviewing the candidates,
+delete them explicitly:
+
+```bash
+shadow gc --delete
+```
+
+GC scans refs reachable from all local branches, tags, and remote-tracking refs. It refuses deletion
+if any referenced object is missing remotely, ignores non-canonical keys, and re-scans Git immediately
+before deleting in batches.
 
 ## Repository Model
 

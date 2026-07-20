@@ -1,6 +1,6 @@
-use super::{BackendError, BackendErrorKind, BackendResult, BlobStore};
+use super::{BackendError, BackendErrorKind, BackendResult, BlobInventory, BlobStore};
 use crate::config::BackendConfig;
-use crate::model::{BlobKey, BlobMetadata, UploadOptions};
+use crate::model::{BlobKey, BlobKeyPrefix, BlobMetadata, InventoryObject, UploadOptions};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_core::future::BoxFuture;
@@ -8,7 +8,7 @@ use std::env;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use ve_tos_rust_sdk::asynchronous::multipart::MultipartAPI;
 use ve_tos_rust_sdk::asynchronous::object::ObjectAPI;
@@ -21,7 +21,8 @@ use ve_tos_rust_sdk::multipart::{
     UploadPartFromFileInput, UploadedPart,
 };
 use ve_tos_rust_sdk::object::{
-    GetObjectToFileInput, HeadObjectInput, PutObjectFromFileInput, SetObjectMetaInput,
+    DeleteMultiObjectsInput, GetObjectToFileInput, HeadObjectInput, ListObjectsType2Input,
+    ObjectTobeDeleted, PutObjectFromFileInput, SetObjectMetaInput,
 };
 
 const MULTIPART_THRESHOLD: u64 = 64 * 1024 * 1024;
@@ -89,6 +90,27 @@ impl TosStore {
         } else {
             format!("{}/{}", self.prefix, key.as_str())
         }
+    }
+
+    fn full_prefix(&self, prefix: &BlobKeyPrefix) -> String {
+        if self.prefix.is_empty() {
+            prefix.as_str().to_string()
+        } else {
+            format!("{}/{}", self.prefix, prefix.as_str())
+        }
+    }
+
+    fn relative_key<'a>(&self, key: &'a str) -> BackendResult<&'a str> {
+        if self.prefix.is_empty() {
+            return Ok(key);
+        }
+        key.strip_prefix(&format!("{}/", self.prefix))
+            .ok_or_else(|| {
+                BackendError::new(
+                    BackendErrorKind::IntegrityMismatch,
+                    "listed object escaped the configured backend prefix",
+                )
+            })
     }
 
     async fn upload_multipart(
@@ -221,6 +243,82 @@ impl BlobStore for TosStore {
             .get_object_to_file(&GetObjectToFileInput::new(&self.bucket, &key, destination))
             .await
             .map_err(map_tos_error)?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl BlobInventory for TosStore {
+    async fn list_prefix(&self, prefix: &BlobKeyPrefix) -> BackendResult<Vec<InventoryObject>> {
+        let mut input = ListObjectsType2Input::new(&self.bucket);
+        input.set_prefix(self.full_prefix(prefix));
+        input.set_max_keys(1000);
+        let mut objects = Vec::new();
+
+        loop {
+            let output = self
+                .client
+                .list_objects_type2(&input)
+                .await
+                .map_err(map_tos_error)?;
+            for object in output.contents() {
+                let key = self.relative_key(object.key())?.to_string();
+                let modified_at = object.last_modified().and_then(|value| {
+                    let timestamp = value.timestamp();
+                    (timestamp >= 0).then(|| UNIX_EPOCH + Duration::from_secs(timestamp as u64))
+                });
+                objects.push(InventoryObject {
+                    key,
+                    size: object.size().max(0) as u64,
+                    modified_at,
+                });
+            }
+            if !output.is_truncated() {
+                break;
+            }
+            input.set_continuation_token(output.next_continuation_token());
+        }
+        Ok(objects)
+    }
+
+    async fn delete_batch(&self, keys: &[BlobKey]) -> BackendResult<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let objects = keys
+            .iter()
+            .map(|key| ObjectTobeDeleted::new(self.full_key(key)))
+            .collect::<Vec<_>>();
+        let output = self
+            .client
+            .delete_multi_objects(&DeleteMultiObjectsInput::new_with_objects(
+                &self.bucket,
+                objects,
+            ))
+            .await
+            .map_err(map_tos_error)?;
+        if let Some(error) = output.error().first() {
+            return Err(BackendError::new(
+                BackendErrorKind::Other,
+                format!(
+                    "failed to delete {}: {}: {} ({} error(s))",
+                    error.key(),
+                    error.code(),
+                    error.message(),
+                    output.error().len()
+                ),
+            ));
+        }
+        if output.deleted().len() != keys.len() {
+            return Err(BackendError::new(
+                BackendErrorKind::Other,
+                format!(
+                    "TOS reported {} deleted object(s), expected {}",
+                    output.deleted().len(),
+                    keys.len()
+                ),
+            ));
+        }
         Ok(())
     }
 }

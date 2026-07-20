@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-火山引擎对象存储 TOS 是 Shadow v2 的首个存储后端。第一阶段只要求实现通用 `BlobStore` 所需的对象查询、上传和下载，不实现远端 GC。
+火山引擎对象存储 TOS 是 Shadow v2 的首个存储后端。日常对象传输通过通用 `BlobStore` 完成，远端 GC 通过独立的 `BlobInventory` 接口列举和删除对象。
 
 实现优先使用火山引擎官方 Rust SDK：
 
@@ -339,9 +339,9 @@ tos_code=AccessDenied request_id=... retryable=false
 
 不能把对象不存在、权限不足和网络故障统一显示为“文件不存在”。
 
-## 13. GC 能力预留
+## 13. GC 能力
 
-未来 TOS GC 需要：
+TOS GC 实现：
 
 - ListObjectsV2，限定 repository prefix。
 - 分页处理 continuation token。
@@ -351,7 +351,7 @@ tos_code=AccessDenied request_id=... retryable=false
 
 GC 不依赖上传清单文件。TOS prefix 下的对象列表就是库存集合。
 
-第一阶段即使不暴露 GC 命令，也应确保 object key 和项目 name 命名空间已经满足未来安全列举与删除的要求。
+GC 只列举当前 object key 和项目 name 命名空间，非规范对象键不会进入删除候选集合。
 
 ## 14. 测试策略
 
@@ -401,4 +401,4 @@ GC 不依赖上传清单文件。TOS prefix 下的对象列表就是库存集合
 7. 接入 `shadow publish/restore` 状态机。
 8. 增加真实 TOS opt-in 集成测试。
 9. 实现 multipart upload。
-10. 最后增加 list/delete，为 GC 做准备。
+10. 增加 list/delete，实现 GC。

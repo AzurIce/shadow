@@ -1,7 +1,7 @@
 mod tos;
 
 use crate::config::Config;
-use crate::model::{BlobKey, BlobMetadata, UploadOptions};
+use crate::model::{BlobKey, BlobKeyPrefix, BlobMetadata, InventoryObject, UploadOptions};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use std::path::Path;
@@ -57,6 +57,12 @@ pub trait BlobStore: Send + Sync {
     async fn download_file(&self, key: &BlobKey, destination: &Path) -> BackendResult<()>;
 }
 
+#[async_trait]
+pub trait BlobInventory: Send + Sync {
+    async fn list_prefix(&self, prefix: &BlobKeyPrefix) -> BackendResult<Vec<InventoryObject>>;
+    async fn delete_batch(&self, keys: &[BlobKey]) -> BackendResult<()>;
+}
+
 pub fn open(config: &Config) -> Result<Arc<dyn BlobStore>> {
     let Some(backend) = &config.backend else {
         bail!("backend is not configured in shadow.toml");
@@ -67,18 +73,30 @@ pub fn open(config: &Config) -> Result<Arc<dyn BlobStore>> {
     }
 }
 
+pub fn open_inventory(config: &Config) -> Result<Arc<dyn BlobInventory>> {
+    let Some(backend) = &config.backend else {
+        bail!("backend is not configured in shadow.toml");
+    };
+    match backend.kind.as_str() {
+        "volcengine_tos" => Ok(Arc::new(TosStore::new(backend)?)),
+        other => bail!("backend type does not support inventory operations: {other}"),
+    }
+}
+
 #[cfg(test)]
 pub mod testing {
     use super::*;
     use std::collections::HashMap;
     use std::fs;
     use std::sync::Mutex;
+    use std::time::SystemTime;
 
     #[derive(Clone)]
     struct MemoryObject {
         data: Vec<u8>,
         content_type: Option<String>,
         cache_control: Option<String>,
+        modified_at: SystemTime,
     }
 
     #[derive(Default)]
@@ -116,6 +134,7 @@ pub mod testing {
                     data,
                     content_type: None,
                     cache_control: None,
+                    modified_at: SystemTime::now(),
                 },
             );
         }
@@ -160,6 +179,7 @@ pub mod testing {
                     data,
                     content_type: Some(options.content_type.clone()),
                     cache_control: Some(options.cache_control.clone()),
+                    modified_at: SystemTime::now(),
                 },
             );
             *self.uploads.lock().unwrap() += 1;
@@ -191,6 +211,32 @@ pub mod testing {
                 .ok_or_else(|| BackendError::new(BackendErrorKind::NotFound, "object missing"))?;
             fs::write(destination, data)
                 .map_err(|error| BackendError::new(BackendErrorKind::Other, error.to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl BlobInventory for MemoryStore {
+        async fn list_prefix(&self, prefix: &BlobKeyPrefix) -> BackendResult<Vec<InventoryObject>> {
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix.as_str()))
+                .map(|(key, object)| InventoryObject {
+                    key: key.clone(),
+                    size: object.data.len() as u64,
+                    modified_at: Some(object.modified_at),
+                })
+                .collect())
+        }
+
+        async fn delete_batch(&self, keys: &[BlobKey]) -> BackendResult<()> {
+            let mut objects = self.objects.lock().unwrap();
+            for key in keys {
+                objects.remove(key.as_str());
+            }
+            Ok(())
         }
     }
 }

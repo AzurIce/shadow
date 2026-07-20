@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::SystemTime;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ObjectId(String);
@@ -87,6 +88,55 @@ impl BlobKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn parse(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        if value.is_empty()
+            || value.starts_with('/')
+            || value.ends_with('/')
+            || value.split('/').any(|part| {
+                part.is_empty()
+                    || part == "."
+                    || part == ".."
+                    || part
+                        .chars()
+                        .any(|character| character == '\\' || character.is_control())
+            })
+        {
+            bail!("invalid blob key");
+        }
+        Ok(Self(value))
+    }
+
+    pub fn object_id_for_project(&self, name: &str) -> Option<ObjectId> {
+        let remainder = self.0.strip_prefix(&format!("{name}/objects/sha256/"))?;
+        let (directory, file_name) = remainder.split_once('/')?;
+        if directory.len() != 2 || file_name.len() != 62 || file_name.contains('/') {
+            return None;
+        }
+        let oid = ObjectId::from_sha256_hex(format!("{directory}{file_name}")).ok()?;
+        (Self::for_object(name, &oid) == *self).then_some(oid)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlobKeyPrefix(String);
+
+impl BlobKeyPrefix {
+    pub fn for_project_objects(name: &str) -> Self {
+        Self(format!("{name}/objects/sha256/"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InventoryObject {
+    pub key: String,
+    pub size: u64,
+    pub modified_at: Option<SystemTime>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,5 +205,19 @@ mod tests {
             BlobKey::for_object("my-project", &oid).as_str(),
             format!("my-project/objects/sha256/aa/{}", "a".repeat(62))
         );
+    }
+
+    #[test]
+    fn parses_only_canonical_project_object_keys() {
+        let oid = ObjectId::from_sha256_hex("a".repeat(64)).unwrap();
+        let key = BlobKey::for_object("my-project", &oid);
+        assert_eq!(key.object_id_for_project("my-project"), Some(oid));
+        assert!(
+            BlobKey::parse("my-project/objects/sha256/aa/not-a-digest")
+                .unwrap()
+                .object_id_for_project("my-project")
+                .is_none()
+        );
+        assert!(BlobKey::parse("../outside").is_err());
     }
 }
