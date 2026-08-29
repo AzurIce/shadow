@@ -122,6 +122,7 @@ shadow -C ../another-repository status
 | `shadow restore [--force]` | Treat refs as authoritative and materialize files through the cache. |
 | `shadow check [--remote]` | Validate repository invariants and return a failing exit code on issues. |
 | `shadow gc [--delete] [--grace-days <days>]` | Compare reachable Git refs with remote inventory and remove unreferenced objects. |
+| `shadow free --keep-at <ref> [--delete] [--grace-days <days>]` | Release objects not referenced at the given commits; refs elsewhere in history become dangling. |
 
 All commands accept the global `-C <path>` option. `status` follows the shape of `git status`: healthy published files are hidden and only actionable groups are printed. `check` hashes existing cache objects, checks the entire repository, and is suitable for CI.
 
@@ -147,6 +148,23 @@ shadow gc --delete
 GC scans refs reachable from all local branches, tags, and remote-tracking refs. It refuses deletion
 if any referenced object is missing remotely, ignores non-canonical keys, and re-scans Git immediately
 before deleting in batches.
+
+`gc` never deletes an object that any reachable ref mentions. Repositories that treat published
+objects as re-derivable artifacts can go further and release objects by retention policy:
+
+```bash
+shadow free --keep-at origin/main
+```
+
+Only the refs in the given commits' trees count as live; the flag is repeatable, e.g. the deployed
+commit plus its predecessor. Named after C's `free()`, the command may invalidate pointers by
+design: refs elsewhere in history keep pointing at released objects and become dangling. Before
+deleting, `free` reports how many ref versions across how many paths will dangle, keeps the same
+30-day grace period for recently uploaded objects, and stays a dry run until `--delete` is passed:
+
+```bash
+shadow free --keep-at origin/main --delete
+```
 
 ## Repository Model
 
@@ -192,6 +210,7 @@ See [serving public assets](docs/public-assets.md) for URL construction, TOS acc
 - Cache objects are treated as immutable and are never exposed as writable hard links.
 - Credentials are read from environment variables and are never written into refs.
 - Remote object keys are generated from validated project names and SHA-256 IDs.
+- `free` intentionally creates dangling refs; it always reports the dangling ref count before `--delete`.
 
 ## Documentation
 

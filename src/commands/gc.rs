@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 const DELETE_BATCH_SIZE: usize = 1000;
-const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+pub(crate) const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
 struct Candidate {
     key: BlobKey,
@@ -37,16 +37,59 @@ pub async fn gc_with_inventory(
     now: SystemTime,
 ) -> Result<()> {
     let referenced = reachable_objects(&repo.root)?;
+    collect_with_inventory(
+        repo,
+        inventory,
+        CollectOptions {
+            referenced,
+            refresh_referenced: &|| reachable_objects(&repo.root),
+            label: "GC",
+            delete,
+            grace_days,
+            now,
+        },
+    )
+    .await
+}
+
+/// Shared engine behind `gc` and `free`: classify the remote inventory against
+/// `referenced`, refuse when referenced objects are missing remotely, and delete
+/// candidates only after `refresh_referenced` re-approves them.
+pub(crate) struct CollectOptions<'a> {
+    /// Objects considered live; everything else in the namespace is a candidate.
+    pub referenced: BTreeMap<ObjectId, u64>,
+    /// Re-read the live set immediately before deletion so mid-scan ref writes win.
+    pub refresh_referenced: &'a dyn Fn() -> Result<BTreeMap<ObjectId, u64>>,
+    /// Command name used in progress output, e.g. "GC" or "free".
+    pub label: &'a str,
+    pub delete: bool,
+    pub grace_days: u64,
+    pub now: SystemTime,
+}
+
+pub(crate) async fn collect_with_inventory(
+    repo: &Repository,
+    inventory: &dyn BlobInventory,
+    options: CollectOptions<'_>,
+) -> Result<()> {
+    let CollectOptions {
+        referenced,
+        refresh_referenced,
+        label,
+        delete,
+        grace_days,
+        now,
+    } = options;
     let prefix = BlobKeyPrefix::for_project_objects(&repo.config.name);
     let remote = inventory.list_prefix(&prefix).await?;
     let grace = Duration::from_secs(
         grace_days
             .checked_mul(SECONDS_PER_DAY)
-            .context("GC grace period is too large")?,
+            .context("grace period is too large")?,
     );
     let cutoff = now
         .checked_sub(grace)
-        .context("GC grace period predates the system clock")?;
+        .context("grace period predates the system clock")?;
     let mut candidates = Vec::new();
     let mut recent = 0_usize;
     let mut unknown = 0_usize;
@@ -93,7 +136,7 @@ pub async fn gc_with_inventory(
         println!("[candidate] {} ({} bytes)", candidate.oid, candidate.size);
     }
     println!(
-        "GC candidates: {}; recent objects kept: {}; unknown keys kept: {}; objects without modification time kept: {}",
+        "{label} candidates: {}; recent objects kept: {}; unknown keys kept: {}; objects without modification time kept: {}",
         candidates.len(),
         recent,
         unknown,
@@ -102,7 +145,7 @@ pub async fn gc_with_inventory(
 
     if !missing_remote.is_empty() || !invalid_remote.is_empty() {
         bail!(
-            "refusing GC because {} Git-referenced object(s) are missing or invalid remotely",
+            "refusing deletion because {} Git-referenced object(s) are missing or invalid remotely",
             missing_remote.len() + invalid_remote.len()
         );
     }
@@ -116,8 +159,8 @@ pub async fn gc_with_inventory(
         return Ok(());
     }
 
-    // Re-read Git immediately before deletion so refs created during the inventory scan win.
-    let referenced_before_delete = reachable_objects(&repo.root)?;
+    // Re-read refs immediately before deletion so refs created during the inventory scan win.
+    let referenced_before_delete = refresh_referenced()?;
     candidates.retain(|candidate| !referenced_before_delete.contains_key(&candidate.oid));
     if candidates.is_empty() {
         println!("All candidates became referenced before deletion; nothing was deleted.");
@@ -136,7 +179,7 @@ pub async fn gc_with_inventory(
             println!("[deleted] {}", candidate.oid);
         }
     }
-    println!("Deleted {deleted} unreferenced remote object(s).");
+    println!("Deleted {deleted} remote object(s).");
     Ok(())
 }
 
@@ -181,6 +224,13 @@ fn canonical_object_id(repo: &Repository, object: &InventoryObject) -> Option<Ob
 }
 
 fn reachable_objects(root: &std::path::Path) -> Result<BTreeMap<ObjectId, u64>> {
+    read_ref_objects(root, historical_ref_versions(root)?)
+}
+
+/// Enumerate every committed ref version as `(git blob id, ref path)`.
+pub(crate) fn historical_ref_versions(
+    root: &std::path::Path,
+) -> Result<BTreeSet<(String, String)>> {
     let output = Command::new("git")
         .current_dir(root)
         .args(["rev-list", "--objects", "--all", "-z", "--", ".shadow/refs"])
@@ -227,7 +277,13 @@ fn reachable_objects(root: &std::path::Path) -> Result<BTreeMap<ObjectId, u64>> 
             blobs.insert((git_oid, String::from_utf8_lossy(path).into_owned()));
         }
     }
+    Ok(blobs)
+}
 
+pub(crate) fn read_ref_objects(
+    root: &std::path::Path,
+    blobs: BTreeSet<(String, String)>,
+) -> Result<BTreeMap<ObjectId, u64>> {
     let mut referenced = BTreeMap::new();
     for (git_oid, path) in blobs {
         let output = Command::new("git")

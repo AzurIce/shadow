@@ -48,6 +48,18 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         grace_days: u64,
     },
+    /// Release remote objects not referenced at the given commits
+    Free {
+        /// Keep objects referenced by refs in this commit's tree; repeat for more snapshots
+        #[arg(long = "keep-at", required = true, value_name = "REF")]
+        keep_at: Vec<String>,
+        /// Release candidates instead of only reporting them
+        #[arg(long)]
+        delete: bool,
+        /// Keep recently uploaded objects newer than this many days
+        #[arg(long, default_value_t = 30)]
+        grace_days: u64,
+    },
 }
 
 #[tokio::main]
@@ -62,6 +74,11 @@ async fn main() -> Result<()> {
         Command::Restore { force } => commands::restore::run(force).await,
         Command::Check { remote } => commands::check::run(remote).await,
         Command::Gc { delete, grace_days } => commands::gc::run(delete, grace_days).await,
+        Command::Free {
+            keep_at,
+            delete,
+            grace_days,
+        } => commands::free::run(keep_at, delete, grace_days).await,
     }
 }
 
@@ -102,5 +119,50 @@ mod tests {
                 grace_days: 7
             }
         ));
+    }
+
+    #[test]
+    fn parses_free_safety_defaults() {
+        let cli = Cli::try_parse_from(["shadow", "free", "--keep-at", "origin/main"]).unwrap();
+        let Command::Free {
+            keep_at,
+            delete,
+            grace_days,
+        } = cli.command
+        else {
+            panic!("expected free command");
+        };
+        assert_eq!(keep_at, vec!["origin/main".to_string()]);
+        assert!(!delete);
+        assert_eq!(grace_days, 30);
+
+        let cli = Cli::try_parse_from([
+            "shadow",
+            "free",
+            "--keep-at",
+            "origin/main",
+            "--keep-at",
+            "v0.2.0",
+            "--delete",
+            "--grace-days",
+            "7",
+        ])
+        .unwrap();
+        let Command::Free {
+            keep_at,
+            delete,
+            grace_days,
+        } = cli.command
+        else {
+            panic!("expected free command");
+        };
+        assert_eq!(
+            keep_at,
+            vec!["origin/main".to_string(), "v0.2.0".to_string()]
+        );
+        assert!(delete);
+        assert_eq!(grace_days, 7);
+
+        assert!(Cli::try_parse_from(["shadow", "free"]).is_err());
     }
 }
