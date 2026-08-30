@@ -65,6 +65,9 @@ bucket = "my-shadow-bucket"
 prefix = "shadow"
 ```
 
+Objects land under `<prefix>/<name>/objects/sha256/…` inside the bucket—see
+[where objects land](#where-objects-land) for how the pieces compose.
+
 Provide credentials through the process environment or a repository-root `.env` file:
 
 ```dotenv
@@ -168,13 +171,17 @@ shadow free --keep-at origin/main --delete
 
 ## Repository Model
 
-For a managed file such as `assets/hero.png`, Git stores a ref at:
+Shadow separates what Git tracks from where object bodies live. Git records facts, Shadow stores
+bodies, and refs are the bridge between the two:
 
 ```text
-.shadow/refs/assets/hero.png.ref
+worktree file    assets/hero.png                             managed, Git-ignored
+committed ref    .shadow/refs/assets/hero.png.ref            pinned by Git
+local cache      .shadow/cache/objects/sha256/ab/cdef...     immutable, per checkout
+remote object    <prefix>/<name>/objects/sha256/ab/cdef...   in the configured bucket
 ```
 
-The ref is readable TOML:
+The committed ref is readable TOML and pins the content identity:
 
 ```toml
 version = 1
@@ -182,17 +189,38 @@ oid = "sha256:abcdef0123456789..."
 size = 1048576
 ```
 
-Object bodies are addressed only by their digest:
+### Where objects land
+
+Every upload stores the object under a key derived only from the project identity and the digest:
 
 ```text
-Local cache:
-.shadow/cache/objects/sha256/ab/cdef...
-
-Remote object key:
-<prefix>/<name>/objects/sha256/ab/cdef...
+<prefix>/<name>/objects/sha256/<first 2 hex>/<remaining 62 hex>
 ```
 
-Original paths and extensions are deliberately excluded from object keys. Renaming a file does not upload its bytes again, and identical content is stored once within a project namespace.
+| Segment | Comes from | Role |
+| --- | --- | --- |
+| `prefix` | `[backend] prefix` in `shadow.toml` | Lets one bucket serve several tools or projects. Optional; with `""` keys start at `<name>/`. |
+| `name` | `name` in `shadow.toml` | The project namespace; `shadow init` defaults it to the repository directory name. |
+| `objects/sha256/…` | the object content | A two-character fan-out directory followed by the remaining 62 digest characters. |
+
+For example, with `prefix = "shadow"`, `name = "my-project"`, and a digest starting `abcd…`, the
+full key inside the configured bucket is:
+
+```text
+shadow/my-project/objects/sha256/ab/cd...
+```
+
+Together, `prefix` and `name` form the project namespace: every remote read, write, and inventory
+scan (`status --remote`, `gc`, `free`) happens inside it. The worktree path (`assets/hero.png`) and
+its extension never reach the object key, so renaming a file does not re-upload its bytes, and
+identical content is stored once per namespace. The local cache mirrors only the digest portion and
+omits `prefix` and `name`, because `.shadow/` already belongs to a single checkout.
+
+Treat `bucket`, `prefix`, and `name` as stable identity once objects are published: changing any of
+them points Shadow at a namespace that is still empty, and existing objects would have to be
+re-published. The `[backend] endpoint` is used for SDK requests and request signing only; the
+hostname browsers see is a bucket, custom-domain, or CDN concern (see
+[serving public assets](docs/public-assets.md)).
 
 ## Public Assets
 
