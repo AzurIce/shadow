@@ -96,6 +96,7 @@ pub mod testing {
         data: Vec<u8>,
         content_type: Option<String>,
         cache_control: Option<String>,
+        content_disposition: Option<String>,
         modified_at: SystemTime,
     }
 
@@ -134,6 +135,7 @@ pub mod testing {
                     data,
                     content_type: None,
                     cache_control: None,
+                    content_disposition: None,
                     modified_at: SystemTime::now(),
                 },
             );
@@ -161,6 +163,7 @@ pub mod testing {
                     etag: None,
                     content_type: object.content_type.clone(),
                     cache_control: object.cache_control.clone(),
+                    content_disposition: object.content_disposition.clone(),
                 }))
         }
 
@@ -179,6 +182,7 @@ pub mod testing {
                     data,
                     content_type: Some(options.content_type.clone()),
                     cache_control: Some(options.cache_control.clone()),
+                    content_disposition: options.content_disposition.clone(),
                     modified_at: SystemTime::now(),
                 },
             );
@@ -197,6 +201,7 @@ pub mod testing {
                 .ok_or_else(|| BackendError::new(BackendErrorKind::NotFound, "object missing"))?;
             object.content_type = Some(options.content_type.clone());
             object.cache_control = Some(options.cache_control.clone());
+            object.content_disposition = options.content_disposition.clone();
             *self.metadata_updates.lock().unwrap() += 1;
             Ok(())
         }

@@ -145,12 +145,14 @@ pub struct BlobMetadata {
     pub etag: Option<String>,
     pub content_type: Option<String>,
     pub cache_control: Option<String>,
+    pub content_disposition: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UploadOptions {
     pub content_type: String,
     pub cache_control: String,
+    pub content_disposition: Option<String>,
 }
 
 pub const DEFAULT_CACHE_CONTROL: &str = "max-age=31536000, immutable";
@@ -160,13 +162,62 @@ impl UploadOptions {
         Self {
             content_type: content_type.into(),
             cache_control: DEFAULT_CACHE_CONTROL.to_string(),
+            content_disposition: None,
         }
+    }
+
+    pub fn with_filename(mut self, path: &std::path::Path) -> Result<Self> {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("download filename must be UTF-8")?;
+        if name.is_empty() || name.chars().any(char::is_control) {
+            bail!("download filename must not be empty or contain control characters");
+        }
+        let fallback: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii() && c != '"' && c != '\\' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let mut encoded = String::new();
+        for byte in name.bytes() {
+            if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+                encoded.push(char::from(byte));
+            } else {
+                use std::fmt::Write;
+                write!(&mut encoded, "%{byte:02X}")?;
+            }
+        }
+        self.content_disposition = Some(format!(
+            "inline; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+        ));
+        Ok(self)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encodes_inline_download_filename() {
+        let options = UploadOptions::new("application/zip")
+            .with_filename(std::path::Path::new("dist/启动器 win.zip"))
+            .unwrap();
+        let header = options.content_disposition.unwrap();
+        assert!(header.starts_with("inline; filename=\"___ win.zip\";"));
+        assert!(header.contains("filename*=UTF-8''%E5%90%AF%E5%8A%A8%E5%99%A8%20win.zip"));
+        assert!(
+            UploadOptions::new("text/plain")
+                .with_filename(std::path::Path::new("bad\r\nname.txt"))
+                .is_err()
+        );
+    }
 
     #[test]
     fn validates_object_ids() {

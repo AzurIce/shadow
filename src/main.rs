@@ -28,7 +28,11 @@ enum Command {
         remote: bool,
     },
     /// Publish worktree content and create or update refs
-    Publish,
+    Publish {
+        /// Force download instead of inline preview (retains the source filename)
+        #[arg(long)]
+        attachment: bool,
+    },
     /// Restore worktree files from refs
     Restore {
         #[arg(long)]
@@ -70,7 +74,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Init => commands::init::run(),
         Command::Status { remote } => commands::status::run(remote).await,
-        Command::Publish => commands::publish::run().await,
+        Command::Publish { attachment } => commands::publish::run(attachment).await,
         Command::Restore { force } => commands::restore::run(force).await,
         Command::Check { remote } => commands::check::run(remote).await,
         Command::Gc { delete, grace_days } => commands::gc::run(delete, grace_days).await,
@@ -85,6 +89,17 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_optional_attachment_mode() {
+        let cli = Cli::try_parse_from(["shadow", "publish"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Publish { attachment: false }
+        ));
+        let cli = Cli::try_parse_from(["shadow", "publish", "--attachment"]).unwrap();
+        assert!(matches!(cli.command, Command::Publish { attachment: true }));
+    }
 
     #[test]
     fn parses_global_directory() {

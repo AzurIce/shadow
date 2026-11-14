@@ -78,7 +78,11 @@ pub async fn collect(
                     Some(metadata)
                         if metadata.size == reference.size
                             && metadata.content_type.as_deref() == Some(content_type.as_str())
-                            && metadata.cache_control.as_deref() == Some(DEFAULT_CACHE_CONTROL) =>
+                            && metadata.cache_control.as_deref() == Some(DEFAULT_CACHE_CONTROL)
+                            && metadata
+                                .content_disposition
+                                .as_ref()
+                                .is_some_and(|v| !v.is_empty()) =>
                     {
                         Some("ok")
                     }
