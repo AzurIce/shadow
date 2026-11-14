@@ -13,13 +13,21 @@ struct PublishItem {
     content_type: String,
 }
 
-pub async fn run() -> Result<()> {
+pub async fn run(attachment: bool) -> Result<()> {
     let repo = context::discover()?;
     let store = backend::open(&repo.config)?;
-    publish_with_store(&repo, store.as_ref()).await
+    publish_with_store_mode(&repo, store.as_ref(), attachment).await
 }
 
 pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Result<()> {
+    publish_with_store_mode(repo, store, false).await
+}
+
+async fn publish_with_store_mode(
+    repo: &Repository,
+    store: &dyn BlobStore,
+    attachment: bool,
+) -> Result<()> {
     let worktree = repo.managed_files()?;
     let refs = repo.load_refs()?;
     let mut declared_types = HashMap::new();
@@ -53,6 +61,11 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
             let ref_unchanged = refs.get(&relative) == Some(&reference);
             let key = repo.blob_key(&reference.oid);
             let mut options = UploadOptions::new(&content_type).with_filename(&relative)?;
+            if attachment {
+                options.content_disposition = options
+                    .content_disposition
+                    .map(|v| v.replacen("inline", "attachment", 1));
+            }
             let metadata = store.stat(&key).await?;
             if let Some(existing) = metadata
                 .as_ref()
@@ -64,7 +77,12 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
                         relative.display()
                     );
                 }
-                options.content_disposition = Some(existing.clone());
+                options.content_disposition =
+                    Some(if attachment && existing.starts_with("inline;") {
+                        existing.replacen("inline", "attachment", 1)
+                    } else {
+                        existing.clone()
+                    });
             }
             match metadata {
                 Some(metadata) if metadata.size != reference.size => bail!(
@@ -250,6 +268,36 @@ mod tests {
         let error = publish_with_store(&repo, &store).await.unwrap_err();
 
         assert!(error.to_string().contains("conflicting content types"));
+    }
+
+    #[tokio::test]
+    async fn attachment_mode_repairs_header_without_uploading_bytes() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
+        fs::write(temp.path().join(".gitignore"), "# shadow\n*.zip\n").unwrap();
+        fs::write(temp.path().join("app.zip"), b"package").unwrap();
+        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
+            .unwrap();
+        let store = MemoryStore::default();
+        publish_with_store(&repo, &store).await.unwrap();
+        publish_with_store_mode(&repo, &store, true).await.unwrap();
+        let reference = repo
+            .load_refs()
+            .unwrap()
+            .remove(Path::new("app.zip"))
+            .unwrap();
+        let header = store
+            .stat(&repo.blob_key(&reference.oid))
+            .await
+            .unwrap()
+            .unwrap()
+            .content_disposition
+            .unwrap();
+        assert!(header.starts_with("attachment; filename=\"app.zip\""));
+        assert_eq!(store.upload_count(), 1);
+        assert_eq!(store.metadata_update_count(), 1);
+        publish_with_store_mode(&repo, &store, true).await.unwrap();
+        assert_eq!(store.metadata_update_count(), 1);
     }
 
     #[tokio::test]
