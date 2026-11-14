@@ -123,6 +123,9 @@ impl TosStore {
         let mut input = CreateMultipartUploadInput::new(&self.bucket, key);
         input.set_content_type(&options.content_type);
         input.set_cache_control(&options.cache_control);
+        if let Some(value) = &options.content_disposition {
+            input.set_content_disposition(value);
+        }
         let created = self
             .client
             .create_multipart_upload(&input)
@@ -191,6 +194,7 @@ impl BlobStore for TosStore {
                 etag: Some(output.etag().to_string()),
                 content_type: nonempty(output.content_type()),
                 cache_control: nonempty(output.cache_control()),
+                content_disposition: nonempty(output.content_disposition()),
             })),
             Err(error) if is_not_found(&error) => Ok(None),
             Err(error) => Err(map_tos_error(error)),
@@ -214,6 +218,9 @@ impl BlobStore for TosStore {
         let mut input = PutObjectFromFileInput::new_with_file_path(&self.bucket, &key, source);
         input.set_content_type(&options.content_type);
         input.set_cache_control(&options.cache_control);
+        if let Some(value) = &options.content_disposition {
+            input.set_content_disposition(value);
+        }
         self.client
             .put_object_from_file(&input)
             .await
@@ -226,6 +233,9 @@ impl BlobStore for TosStore {
         let mut input = SetObjectMetaInput::new(&self.bucket, &key);
         input.set_content_type(&options.content_type);
         input.set_cache_control(&options.cache_control);
+        if let Some(value) = &options.content_disposition {
+            input.set_content_disposition(value);
+        }
         input.set_metadata_directive(MetadataDirectiveReplace);
         self.client
             .set_object_meta(&input)

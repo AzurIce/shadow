@@ -228,6 +228,8 @@ Shadow sets `Content-Type` and `Cache-Control: max-age=31536000, immutable` duri
 
 Public access is controlled by the bucket policy, custom domain, or CDN—not by Shadow. Keep the bucket private unless anonymous object access is intentional.
 
+Uploads also receive `Content-Disposition: inline` with the source basename as a suggested download filename. UTF-8 names use RFC 8187 `filename*` plus an ASCII fallback. Images and videos remain previewable; archives retain their filename when saved. Control characters in filenames are rejected. Existing objects without this metadata are repaired by `publish` without re-uploading their bodies. If identical content is published under another filename, the existing remote filename is retained with a warning; filenames are not part of object identity.
+
 See [serving public assets](docs/public-assets.md) for URL construction, TOS access policy considerations, and caching guidance.
 
 ## Safety Model

@@ -52,8 +52,21 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
         let result = async {
             let ref_unchanged = refs.get(&relative) == Some(&reference);
             let key = repo.blob_key(&reference.oid);
-            let options = UploadOptions::new(&content_type);
-            match store.stat(&key).await? {
+            let mut options = UploadOptions::new(&content_type).with_filename(&relative)?;
+            let metadata = store.stat(&key).await?;
+            if let Some(existing) = metadata
+                .as_ref()
+                .and_then(|m| m.content_disposition.as_ref())
+            {
+                if options.content_disposition.as_ref() != Some(existing) {
+                    eprintln!(
+                        "[keeping existing download filename] {}",
+                        relative.display()
+                    );
+                }
+                options.content_disposition = Some(existing.clone());
+            }
+            match metadata {
                 Some(metadata) if metadata.size != reference.size => bail!(
                     "remote object {} has size {}, expected {}",
                     reference.oid,
@@ -63,7 +76,8 @@ pub async fn publish_with_store(repo: &Repository, store: &dyn BlobStore) -> Res
                 Some(metadata)
                     if metadata.content_type.as_deref() == Some(content_type.as_str())
                         && metadata.cache_control.as_deref()
-                            == Some(options.cache_control.as_str()) => {}
+                            == Some(options.cache_control.as_str())
+                        && metadata.content_disposition == options.content_disposition => {}
                 Some(_) => {
                     println!("[updating metadata] {}", relative.display());
                     store.update_metadata(&key, &options).await?;
@@ -124,6 +138,9 @@ async fn verify_remote(
     }
     if metadata.cache_control.as_deref() != Some(options.cache_control.as_str()) {
         bail!("published object cache control does not match expected value");
+    }
+    if metadata.content_disposition != options.content_disposition {
+        bail!("published object content disposition does not match expected value");
     }
     Ok(())
 }
@@ -233,5 +250,33 @@ mod tests {
         let error = publish_with_store(&repo, &store).await.unwrap_err();
 
         assert!(error.to_string().contains("conflicting content types"));
+    }
+
+    #[tokio::test]
+    async fn keeps_first_filename_for_identical_content_and_is_idempotent() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join(".shadow/refs")).unwrap();
+        fs::write(temp.path().join(".gitignore"), "# shadow\n*.zip\n").unwrap();
+        fs::write(temp.path().join("first.zip"), b"archive bytes").unwrap();
+        let repo = Repository::from_parts(temp.path().to_path_buf(), Config::new("test").unwrap())
+            .unwrap();
+        let store = MemoryStore::default();
+        publish_with_store(&repo, &store).await.unwrap();
+        let reference = repo
+            .load_refs()
+            .unwrap()
+            .remove(Path::new("first.zip"))
+            .unwrap();
+        let key = repo.blob_key(&reference.oid);
+        let first = store.stat(&key).await.unwrap().unwrap().content_disposition;
+        fs::write(temp.path().join("second.zip"), b"archive bytes").unwrap();
+        publish_with_store(&repo, &store).await.unwrap();
+        assert_eq!(
+            store.stat(&key).await.unwrap().unwrap().content_disposition,
+            first
+        );
+        assert!(first.unwrap().contains("first.zip"));
+        assert_eq!(store.upload_count(), 1);
+        assert_eq!(store.metadata_update_count(), 0);
     }
 }
